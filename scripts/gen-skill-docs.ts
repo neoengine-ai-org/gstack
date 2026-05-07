@@ -662,3 +662,21 @@ if (!DRY_RUN) {
     }
   } catch { /* non-fatal */ }
 }
+
+// Regenerate gstack/llms.txt — single-file capability index for AI agents.
+// Runs after SKILL.md generation so it sees current skill descriptions and
+// browse command list. Freshness is asserted in test/llms-txt-shape.test.ts.
+if (!DRY_RUN) {
+  try {
+    const { writeLlmsTxt } = await import('./gen-llms-txt');
+    const result = await writeLlmsTxt();
+    if (result.warnings.length > 0) {
+      for (const w of result.warnings) console.error(`[gen-llms-txt] WARN: ${w}`);
+    } else {
+      console.log(`[gen-llms-txt] gstack/llms.txt: ${result.skills.length} skills, ${result.browseCommands.length} browse commands`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[gen-llms-txt] FAILED: ${msg}`);
+  }
+}
