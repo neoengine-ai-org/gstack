@@ -590,17 +590,39 @@ function resetIdleTimer() {
   lastActivity = Date.now();
 }
 
-const idleCheckInterval = setInterval(() => {
+// Named for behavioral testing via __testInternals__. The factory tests in
+// server-factory.test.ts call this directly so the idle-shutdown path can be
+// exercised without waiting 60s for the interval to fire.
+function idleCheckTick() {
   // Headed mode: the user is looking at the browser. Never auto-die.
   // Only shut down when the user explicitly disconnects or closes the window.
-  if (browserManager.getConnectionMode() === 'headed') return;
+  // Reads via the activeBrowserManager indirection so embedders that pass
+  // their own BrowserManager into buildFetchHandler hit the right instance.
+  if (activeBrowserManager.getConnectionMode() === 'headed') return;
   // Tunnel mode: remote agents may send commands sporadically. Never auto-die.
   if (tunnelActive) return;
   if (Date.now() - lastActivity > IDLE_TIMEOUT_MS) {
     console.log(`[browse] Idle for ${IDLE_TIMEOUT_MS / 1000}s, shutting down`);
     activeShutdown?.();
   }
-}, 60_000);
+}
+const idleCheckInterval = setInterval(idleCheckTick, 60_000);
+
+// Test-only surface for server-factory.test.ts. Lets the dual-instance
+// idle-timer behavior be exercised deterministically without mutating
+// Date.now (which would interact with the leaked module-level setInterval).
+// Production code must never import this — see `idle timer + onDisconnect
+// dual-instance fix` describe block for usage.
+export const __testInternals__ = {
+  idleCheckTick,
+  setTunnelActive: (v: boolean) => { tunnelActive = v; },
+  setLastActivity: (t: number) => { lastActivity = t; },
+  // Reset the module-level shutdown latch so tests that drive shutdown to
+  // completion (process.exit-stubbed) can be followed by tests that also
+  // need shutdown to fire. Without this, the second test's shutdown
+  // returns early at the `if (isShuttingDown) return;` guard.
+  resetShutdownState: () => { isShuttingDown = false; },
+};
 
 // ─── Parent-Process Watchdog ────────────────────────────────────────
 // When the spawning CLI process (e.g. a Claude Code session) exits, this
@@ -638,7 +660,7 @@ if (BROWSE_PARENT_PID > 0 && !IS_HEADED_WATCHDOG) {
       //    the parent shell between invocations. The idle timeout (30 min)
       //    handles eventual cleanup.
       if (hasActivePicker()) return;
-      const headed = browserManager.getConnectionMode() === 'headed';
+      const headed = activeBrowserManager.getConnectionMode() === 'headed';
       if (headed || tunnelActive) {
         console.log(`[browse] Parent process ${BROWSE_PARENT_PID} exited in ${headed ? 'headed' : 'tunnel'} mode, shutting down`);
         activeShutdown?.();
@@ -678,13 +700,22 @@ function emitInspectorEvent(event: any): void {
 
 // ─── Server ────────────────────────────────────────────────────
 const browserManager = new BrowserManager();
+// Indirection for embedders. Module-level handlers (idleCheckTick, parent
+// watchdog, SIGTERM) read activeBrowserManager so that buildFetchHandler can
+// retarget them at a caller-supplied BrowserManager. Symmetric with the
+// existing `let activeShutdown` pattern at module scope (line ~113).
+// Without this, embedders like gbrowser hit the dead module-level instance
+// whose connectionMode never leaves 'launched' — and headed mode never
+// short-circuits idle-shutdown.
+let activeBrowserManager: BrowserManager = browserManager;
 // When the user closes the headed browser window, run full cleanup
 // (kill sidebar-agent, save session, remove profile locks, delete state file)
 // before exiting. Exit code 0 means user-initiated clean quit (Cmd+Q on
 // macOS) so process supervisors like gbrowser's gbd skip the restart loop;
 // 2 means a real crash that should respawn. The fallback `?? 2` preserves
 // legacy crash semantics for any caller that invokes onDisconnect without
-// an explicit code.
+// an explicit code. This is the safety-net default for the CLI flow before
+// any buildFetchHandler call rebinds onDisconnect onto the cfg instance.
 browserManager.onDisconnect = (code) => activeShutdown?.(code ?? 2);
 let isShuttingDown = false;
 
@@ -1183,7 +1214,7 @@ if (import.meta.main) {
       console.log('[browse] Received SIGTERM but cookie picker is active, ignoring to avoid stranding the picker UI');
       return;
     }
-    const headed = browserManager.getConnectionMode() === 'headed';
+    const headed = activeBrowserManager.getConnectionMode() === 'headed';
     if (headed || tunnelActive) {
       console.log(`[browse] Received SIGTERM in ${headed ? 'headed' : 'tunnel'} mode, shutting down`);
       activeShutdown?.();
@@ -1359,6 +1390,31 @@ export function buildFetchHandler(cfg: ServerConfig): ServerHandle {
   // module reference. Critical for embedders whose cfg.browserManager
   // differs from the module-level instance.
   activeShutdown = shutdown;
+
+  // Retarget the BrowserManager indirection at the cfg-instance so the
+  // module-level idleCheckTick + parent watchdog + SIGTERM handler all read
+  // the right connectionMode. Without this, headed embedders auto-shutdown
+  // after 30 min of HTTP idle because the dead module-level instance still
+  // reports connectionMode === 'launched'.
+  activeBrowserManager = cfgBrowserManager;
+
+  // Wire the cfg-instance's onDisconnect to run shutdown when the user
+  // closes the headed browser window. CHAIN any caller-provided handler
+  // instead of overwriting it: gbrowser may have set its own onDisconnect
+  // before calling buildFetchHandler (e.g. for snapshot/log work that needs
+  // to run before the process exits). Caller errors are logged but never
+  // block gstack shutdown — defensive symmetry with the safeUnlinkQuiet /
+  // safeKill philosophy in error-handling.ts.
+  const callerOnDisconnect = cfgBrowserManager.onDisconnect;
+  cfgBrowserManager.onDisconnect = async (code) => {
+    if (callerOnDisconnect) {
+      try { await callerOnDisconnect(code); }
+      catch (err: any) {
+        console.warn('[browse] caller onDisconnect threw:', err?.message ?? err);
+      }
+    }
+    await activeShutdown?.(code ?? 2);
+  };
 
   // Substitute cfgBrowserManager for module-level browserManager in the
   // dispatcher body so all browser-state reads/writes go through the cfg

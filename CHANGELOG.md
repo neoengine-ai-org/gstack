@@ -1,5 +1,58 @@
 # Changelog
 
+## [1.43.3.0] - 2026-05-21
+
+## **Headed Chromium embedded by external supervisors stops auto-shutting-down after 30 minutes of HTTP idle.**
+## **Four module-level lifecycle handlers in `browse/src/server.ts` now read through an `activeBrowserManager` indirection so embedders (gbrowser's phoenix overlay) reach the right `BrowserManager` instance instead of the dead module-level one.**
+
+The dual-instance bug surfaced when a Codex plan review caught what the static eng review missed: `idleCheckTick`, the parent-process watchdog, the SIGTERM handler, and `onDisconnect` wiring all read the module-level `BrowserManager` directly. Embedders pass their own instance into `buildFetchHandler({ browserManager: ... })`, so the module-level instance never has `launchHeaded()` called on it. Its `connectionMode` stays `'launched'` forever, headed-mode early-returns never fire, and after 30 minutes of HTTP idle the server kills itself out from under a still-open overlay window. The onDisconnect leak — window-close cleanup running against the wrong instance — was masked by the 30-min auto-shutdown until this fix; both ship together because they share a single root cause.
+
+The fix introduces `let activeBrowserManager: BrowserManager` at module scope, symmetric with the existing `let activeShutdown` pattern. `buildFetchHandler` retargets it at `cfg.browserManager` and CHAINS `cfg.browserManager.onDisconnect` to `activeShutdown` instead of overwriting any handler the caller already installed. Caller exceptions are logged but never block gstack shutdown — defensive symmetry with `safeUnlinkQuiet` / `safeKill` in `error-handling.ts`. Caller-set onDisconnect handlers run first so embedders can snapshot or log before the process exits; gstack's shutdown owns `process.exit(code)` and runs last.
+
+### The numbers that matter
+
+Source: `bun test browse/test/server-factory.test.ts` — 33 tests, all green. New describe block `idle timer + onDisconnect dual-instance fix` pins five behavioral guarantees plus a static guard.
+
+| Surface | Before | After |
+|---|---|---|
+| gbrowser overlay session, headed, 31 min HTTP idle | Server self-terminates; overlay window orphaned | Server stays alive; idleCheckTick reads cfg-instance and returns early |
+| Headless CLI, 31 min idle | Auto-shutdown (regression-protected by Test 2) | Same behavior, regression test added |
+| Tunnel-active session, headless, 31 min idle | Auto-shutdown skipped (already correct) | Same; Test 4 pins it behaviorally |
+| Window-close on embedder-owned headed window | `browserManager.onDisconnect` fires on dead module-level instance; no cleanup | `cfgBrowserManager.onDisconnect` chained to activeShutdown; full cleanup runs |
+| Embedder pre-installed onDisconnect handler | Silently overwritten by `buildFetchHandler` | Chained: caller's handler runs first, then gstack shutdown |
+| SIGTERM in headed mode (embedder) | Reads stale module-level instance (Codex-caught, original plan missed) | Reads via `activeBrowserManager` |
+
+The static guard (Test 5) counts `activeBrowserManager.getConnectionMode()` calls outside `buildFetchHandler` and pins the count at exactly 3 — `idleCheckTick`, the parent watchdog, and the SIGTERM handler. A future refactor that reintroduces a stale read against module-level `browserManager` at one of those sites fails CI before the user-visible bug returns.
+
+### What this means for gbrowser
+
+gbrowser's phoenix overlay can hold a headed Chromium window open indefinitely without gstack pulling the rug out at the 30-minute mark. Window-close cleanup reaches the right `BrowserManager` instance, so terminal-agent, profile locks, and state files all get torn down against the cfg-owned chrome rather than the dead module-level one. Embedders that pre-wire `cfg.browserManager.onDisconnect` for their own pre-shutdown work (logging, snapshotting, gbd handoff) now have that handler preserved instead of clobbered. gbrowser bumps its gstack submodule SHA after this lands; no gbrowser-side code changes required.
+
+### Itemized changes
+
+#### Fixed
+
+- **`browse/src/server.ts`**: Six edit sites apply the indirection.
+  - Edit 1 (line ~705): Declared `let activeBrowserManager: BrowserManager = browserManager;` alongside the module-level `const browserManager`. Module-level `browserManager.onDisconnect` default wire stays in place as the safety net for the CLI flow before `buildFetchHandler` runs.
+  - Edit 2 (line ~596): Extracted the idle-check setInterval callback into a named `idleCheckTick()` function so behavioral tests can drive it directly. Reads `activeBrowserManager.getConnectionMode()`.
+  - Edit 3 (line ~658): Parent watchdog now reads `activeBrowserManager.getConnectionMode()`.
+  - Edit 4 (inside `buildFetchHandler`, line ~1387): Retargets `activeBrowserManager` at `cfgBrowserManager` and CHAINS the cfg-instance's onDisconnect to `activeShutdown` (preserving any caller-installed handler). Replaces what would have been a bare `cfg.onDisconnect = ...` clobber — caught by Codex against an earlier draft.
+  - Edit 5 (no code change): Confirmed the module-level `browserManager.onDisconnect` at line 714 stays in place.
+  - Edit 6 (line ~1212): SIGTERM handler reads `activeBrowserManager.getConnectionMode()`. Caught by Codex; the original eng-review plan missed this fourth lifecycle site.
+- **`__testInternals__` export**: New test-only surface in `browse/src/server.ts` exposing `idleCheckTick`, `setTunnelActive`, `setLastActivity`, and `resetShutdownState`. Lets tests exercise the dual-instance behavior deterministically without mutating `Date.now` globally (which would interact with the leaked module-level setInterval) or leaking `isShuttingDown` state between tests.
+
+#### Added
+
+- **`browse/test/server-factory.test.ts`**: New `idle timer + onDisconnect dual-instance fix` describe block with five behavioral tests. Reuses the existing `makeMinimalConfig()` + `__resetRegistry()` patterns from the factory contract tests; new `makeMockBrowserManager()` helper. Tests T1 (REGRESSION — headed embedder does not auto-shutdown), T2 (paired defensive — headless still shuts down), T3 (chain semantics — caller-set onDisconnect preserved + async via `.rejects.toThrow`), T4 (tunnelActive blocks shutdown), T5 (static guard — exactly 3 lifecycle sites use the indirection).
+
+#### Changed
+
+- **`browse/test/sidebar-ux.test.ts`**: Deleted the old `idle check skips in headed mode` string-grep test at line 1596 — it grepped for `=== 'headed'` + `return` and would have passed even with the dual-instance bug present. Behavioral coverage moved to `server-factory.test.ts` per Codex finding (duplicating partial test helpers across files rots; the factory test file already solved minimal-cfg + registry-reset).
+
+#### For contributors
+
+- **Cross-model review note**: The eng review's static-assessment pass said "0 issues" in Architecture, Code Quality, and Performance. Codex's plan review then grounded six issues in actual code reads: Bun memoizes dynamic imports (so `await import('../src/server')` doesn't give fresh module state per test), `initRegistry` throws on token-reuse between tests, `shutdown()` is async (sync `.toThrow()` cannot catch the rejection), `cfg.browserManager.onDisconnect` is a public field that callers may set, the original plan missed the SIGTERM site at line 1186, and tests belong in `server-factory.test.ts` not `sidebar-ux.test.ts`. All six were verified against the actual code and incorporated into the shipped plan. The static eng review's blind spot here was runtime/module-cache semantics; the lesson is that "0 issues" from a static pass is a weaker signal than two-model consensus.
+
 ## [1.43.2.0] - 2026-05-21
 
 ## **Three flagship workflows stop lying to users: /retro detects stale base before fabricating a narrative, /sync-gbrain resumes from gbrain's checkpoint instead of restarting the 35-min import loop, and /review forces every finding to quote the code line that motivates it.**
@@ -93,6 +146,7 @@ If you run `/retro` on a Conductor branch that's been around for a few days, the
 - Defer-doc artifact `~/.gstack-dev/plans/1539-framework-aware-review.md` describes the multi-week framework-aware ORM verification extension (Django/Rails/SQLAlchemy detection, model-introspection helpers, migration-history-aware checks) intentionally deferred from this wave. Promote to active plan when v1.43.0.0 ships and a second high-volume FP report lands on a different framework, or a follow-up retro shows the lighter quoted-line gate doesn't deliver measurable FP reduction.
 - Wave shape preserved from Daegu pattern: ONE bundled PR with bisect commits, atomic squashed commits for `.tmpl` edit + `gen:skill-docs` regen pairs, intermediate verification checkpoints, original contributors credited in commit author + footer. See `[[feedback_one_pr_fix_waves]]` in agent memory.
 
+
 ## [1.43.1.0] - 2026-05-21
 
 ## **Local gbrain PGLite now defaults to Voyage's code-specialized embedding model when `VOYAGE_API_KEY` is set.**
@@ -140,6 +194,7 @@ If you have `VOYAGE_API_KEY` set and run `/setup-gbrain` on a fresh machine, `gb
 
 **Regenerated**
 - `setup-gbrain/SKILL.md`, `sync-gbrain/SKILL.md` — refreshed via `bun run gen:skill-docs --host all` after the template edits
+
 
 ## [1.43.0.0] - 2026-05-20
 
