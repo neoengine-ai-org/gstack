@@ -48,6 +48,16 @@
   let term = null;
   let fitAddon = null;
   let ws = null;
+  /**
+   * 25s client-side WS keepalive interval (v1.44+). Belt-and-suspenders with
+   * the server-side ping in terminal-agent.ts: server pings cover most
+   * idle-NAT cases, client keepalive frames also defend against Chromium's
+   * MV3-adjacent panel suspension heuristics that can pause our timers.
+   * Started on ws.open, cleared on ws.close. The agent silently accepts
+   * `{type:"keepalive"}` text frames.
+   */
+  let keepaliveInterval = null;
+  const KEEPALIVE_INTERVAL_MS = 25000;
 
   function show(el) { el.style.display = ''; }
   function hide(el) { el.style.display = 'none'; }
@@ -371,16 +381,33 @@
       } catch {}
       // Send a single byte to nudge the agent to spawn claude (lazy-spawn trigger).
       try { ws.send(new TextEncoder().encode('\n')); } catch {}
+      // v1.44 client-side keepalive. Server pings every 25s; we ALSO send
+      // keepalive frames at the same cadence so a paused timer on either
+      // side still has the other to lean on. Both are silently dropped
+      // by the agent's message handler.
+      if (keepaliveInterval) clearInterval(keepaliveInterval);
+      keepaliveInterval = setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        try { ws.send(JSON.stringify({ type: 'keepalive' })); } catch {}
+      }, KEEPALIVE_INTERVAL_MS);
     });
 
     ws.addEventListener('message', (ev) => {
       if (typeof ev.data === 'string') {
-        // Agent control message (rare). Treat as JSON; error frames carry code.
+        // Agent control message. Treat as JSON; error frames carry code,
+        // ping frames trigger an immediate pong reply.
         try {
           const msg = JSON.parse(ev.data);
           if (msg.type === 'error' && msg.code === 'CLAUDE_NOT_FOUND') {
             setState(STATE.NO_CLAUDE);
             try { ws.close(); } catch {}
+            return;
+          }
+          if (msg.type === 'ping') {
+            // Mirror the server's timestamp back. Cheap liveness ACK that
+            // lets the agent observe round-trip latency for free.
+            try { ws.send(JSON.stringify({ type: 'pong', ts: msg.ts })); } catch {}
+            return;
           }
         } catch {}
         return;
@@ -392,6 +419,10 @@
 
     ws.addEventListener('close', () => {
       ws = null;
+      if (keepaliveInterval) {
+        clearInterval(keepaliveInterval);
+        keepaliveInterval = null;
+      }
       if (state !== STATE.NO_CLAUDE) setState(STATE.ENDED);
     });
 
@@ -401,6 +432,10 @@
   }
 
   function teardown() {
+    if (keepaliveInterval) {
+      clearInterval(keepaliveInterval);
+      keepaliveInterval = null;
+    }
     try { ws && ws.close(); } catch {}
     ws = null;
     if (term) {
@@ -418,6 +453,10 @@
    * IDLE, kick off auto-connect. Safe to call from any state.
    */
   function forceRestart() {
+    if (keepaliveInterval) {
+      clearInterval(keepaliveInterval);
+      keepaliveInterval = null;
+    }
     try { ws && ws.close(); } catch {}
     ws = null;
     if (term) {

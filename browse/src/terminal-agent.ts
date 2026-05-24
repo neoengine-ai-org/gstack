@@ -61,7 +61,28 @@ interface PtySession {
   rows: number;
   cookie: string;
   spawned: boolean;
+  /**
+   * 25s server-side WS keepalive interval (v1.44+). Set in the WS `open`
+   * handler, cleared in `close`. We send `{type:"ping",ts}` text frames so
+   * NAT boxes, proxies, and Chrome's MV3 panel-suspend heuristics see the
+   * connection as active; the client either replies with `{type:"pong"}`
+   * or fires its own 25s `{type:"keepalive"}` cycle. Either path keeps
+   * the underlying TCP from being silently dropped.
+   */
+  pingInterval: ReturnType<typeof setInterval> | null;
 }
+
+/**
+ * WS keepalive interval. 25s is comfortably under the lowest common NAT
+ * idle timeout (typically 30-60s) and shorter than Chromium's WebSocket
+ * dead-peer threshold. Test-overridable via env so the v1.44 e2e tests
+ * can compress idle-window assertions to <1s without waiting half a
+ * minute per assertion.
+ */
+const KEEPALIVE_INTERVAL_MS = parseInt(
+  process.env.GSTACK_PTY_KEEPALIVE_INTERVAL_MS || '25000',
+  10,
+);
 
 const sessions = new WeakMap<any, PtySession>(); // ws -> session
 
@@ -388,22 +409,52 @@ function buildServer() {
     },
 
     websocket: {
+      /**
+       * Start the 25s server-side keepalive ping. Stored on the session so
+       * close() can clear it. We construct the PtySession here (not lazily
+       * in message()) so the ping interval has somewhere to live before any
+       * data flows. Lazy claude spawn still happens on first binary frame.
+       */
+      open(ws) {
+        const session: PtySession = {
+          proc: null,
+          cols: 80,
+          rows: 24,
+          cookie: (ws.data as any)?.cookie || '',
+          spawned: false,
+          pingInterval: null,
+        };
+        session.pingInterval = setInterval(() => {
+          try {
+            ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+          } catch {
+            // ws likely closed mid-tick; close handler clears the interval.
+          }
+        }, KEEPALIVE_INTERVAL_MS);
+        sessions.set(ws, session);
+      },
+
       message(ws, raw) {
         let session = sessions.get(ws);
         if (!session) {
+          // Fallback for any path where open() didn't fire (shouldn't happen
+          // in Bun.serve but keeps the spawn path safe). No keepalive on
+          // this branch — open() is the supported entry point.
           session = {
             proc: null,
             cols: 80,
             rows: 24,
             cookie: (ws.data as any)?.cookie || '',
             spawned: false,
+            pingInterval: null,
           };
           sessions.set(ws, session);
         }
 
-        // Text frames are control messages: {type: "resize", cols, rows} or
-        // {type: "tabSwitch", tabId, url, title}. Binary frames are raw input
-        // bytes destined for the PTY stdin.
+        // Text frames are control messages: {type: "resize", cols, rows},
+        // {type: "tabSwitch", tabId, url, title}, {type: "tabState", ...},
+        // or v1.44 keepalive frames: {type: "pong", ts}, {type: "keepalive"}.
+        // Binary frames are raw input bytes destined for the PTY stdin.
         if (typeof raw === 'string') {
           let msg: any;
           try { msg = JSON.parse(raw); } catch { return; }
@@ -421,6 +472,14 @@ function buildServer() {
           }
           if (msg?.type === 'tabState') {
             handleTabState(msg);
+            return;
+          }
+          if (msg?.type === 'pong' || msg?.type === 'keepalive' || msg?.type === 'ping') {
+            // Keepalive frames — accepted and silently dropped. The mere
+            // fact that the WS carried this frame is the liveness signal;
+            // there's no application-level state to update at this layer.
+            // `ping` is acknowledged here too in case the client (or a
+            // future agent peer) mirrors our server-side ping shape.
             return;
           }
           // Unknown text frame — ignore.
@@ -480,6 +539,10 @@ function buildServer() {
       close(ws) {
         const session = sessions.get(ws);
         if (session) {
+          if (session.pingInterval) {
+            clearInterval(session.pingInterval);
+            session.pingInterval = null;
+          }
           disposeSession(session);
           if (session.cookie) {
             // Drop the cookie so it can't be replayed against a new PTY.
