@@ -1,5 +1,68 @@
 # Changelog
 
+## [1.45.0.0] - 2026-05-26
+
+## **gstack v2 foundation lands. Catalog tokens drop 56%, eval-first floor covers all 51 skills, hard token + dollar caps gate every PR.**
+
+The always-loaded skill catalog — what every Claude Code session pays for at startup before any real work begins — went from ~9,319 tokens to ~4,045 tokens. That's a 56.6% cut to the surface gstack has been criticized for (third-party review, May 2026: "10K+ tokens before any real code is written"). Heavyweight skills like `/ship`, `/plan-ceo-review`, `/office-hours` still ship their full content, but their frontmatter descriptions trim to one sentence each; the routing prose lives in a new "## When to invoke" body section, and a per-run `scripts/proactive-suggestions.json` registry holds the voice-trigger + proactive-suggest text so agents can pull guidance on demand instead of always-loaded.
+
+This is the v2 foundation release. The architectural break — `sections/*.md.tmpl` pattern, mechanical Read enforcement, eval-coverage annotations — lands in v2.0.0.0 as a coordinated launch. v1.45 absorbs every low-risk win, ships the eval-first floor every future skill must pass, and locks in the v1.44.1 reference baseline so reviewers can audit v1→v2 numbers against a real file (`test/fixtures/parity-baseline-v1.44.1.json`).
+
+### The numbers that matter
+
+Source: `bun run scripts/capture-baseline.ts --tag v1.45.0.0` vs the locked v1.44.1 baseline at `test/fixtures/parity-baseline-v1.44.1.json`. Reproduce locally with `bun test test/skill-size-budget.test.ts`.
+
+| Metric | v1.44.1 | v1.45.0.0 | Δ |
+|---|---|---|---|
+| Catalog tokens (always-loaded system prompt) | ~9,319 | ~4,045 | **−56.6%** |
+| Total SKILL.md corpus | 2,847 KB | 2,813 KB | −1.2% |
+| ship.md | 160 KB | 159 KB | −0.5% |
+| plan-ceo-review.md | 128 KB | 127 KB | −0.7% |
+| office-hours.md | 108 KB | 108 KB | −0.8% |
+| Skills with gate-tier eval coverage | 32 of 51 | **51 of 51** | floor achieved |
+| Cathedral parity invariants pinned | 0 | **10** | structural + content |
+| Token & dollar budget regressions caught at CI | (none) | **5 new test files** | per-skill, corpus, catalog, eval-cost gate, eval-cost periodic |
+
+The corpus barely moved because the catalog trim MOVES routing prose from frontmatter to a body section — it doesn't delete it. The always-loaded surface drops by more than half because catalog text is what Claude Code reads on every session start; body content only loads when the skill is invoked.
+
+### What this means for you
+
+If you use any gstack skill, every session starts ~5,000 tokens lighter before you type anything. Heavyweight invocations like `/ship` cost about the same as before, but session startup feels snappier. If you've been on the fence about installing gstack because of the "fat" reputation, this is the release that addresses it directly: the always-loaded surface is now competitive with stripped-down skill packs while every skill keeps its full body content.
+
+If you contribute skills, the eval-first floor means a new SKILL.md without an entry in `test/skill-coverage-matrix.ts` fails CI. The minimum entry is one line referencing `test/skill-coverage-floor.test.ts` (the free structural-compliance smoke test). Behavioral E2E coverage gets layered on top per skill.
+
+If you run gstack in CI, the new `EVALS_BUDGET_HARD_CAP=$30` cap (per-suite: gate $25 / periodic $70) stops runaway eval costs from a model price change or infinite-retry bug. Override path exists for legit-need-more cases: `EVALS_BUDGET_OVERRIDE_REASON="why this is OK"` logs to `~/.gstack/analytics/spend-overrides.jsonl` for audit.
+
+### Itemized changes
+
+**Added**
+- `scripts/capture-baseline.ts` + `test/helpers/capture-parity-baseline.ts` — captures per-skill SKILL.md sizes, token estimates, frontmatter description lengths, and eval coverage flags. Writes JSON snapshots used by the parity and size-budget gates. Locks `test/fixtures/parity-baseline-v1.44.1.json` as the v1→v2 reference.
+- `test/helpers/parity-harness.ts` + `test/parity-suite.test.ts` — cathedral parity-eval suite floor. `PARITY_INVARIANTS` registry pins must-preserve phrases per skill family (cso: OWASP/STRIDE; plan-ceo: SCOPE EXPANSION / HOLD SCOPE; ship: VERSION/CHANGELOG/PR) so future compression can't silently strip load-bearing prose.
+- `test/skill-coverage-matrix.ts` + `test/skill-coverage-matrix.test.ts` — single source of truth mapping each skill to gate + periodic tests; CI gate asserts every skill has at least one gate-tier entry. 51 skills, 51 entries.
+- `test/skill-coverage-floor.test.ts` — per-skill structural-compliance smoke test (file-IO, free). Verifies frontmatter shape, generated header, body non-trivial, no leaked `{{TEMPLATE}}` placeholders, catalog-trim contract on description. 309 assertions across 51 skills.
+- `test/skill-size-budget.test.ts` — per-skill SKILL.md byte budget (×1.05 default ratio), total corpus budget, catalog token budget (≤7000 for v1.45). Caught regressions get a per-skill breakdown + override path.
+- `test/cso-preserved.test.ts` — pins cso's must-not-strip security guidance phrases (OWASP, STRIDE, daily/comprehensive mode discipline, confidence scoring, active verification). Future compression that hits cso fails CI here.
+- `test/helpers/budget-override.ts` — audit-trail logger for `GSTACK_SIZE_BUDGET_OVERRIDE_REASON` and `EVALS_BUDGET_OVERRIDE_REASON`. Append-only JSONL at `~/.gstack/analytics/spend-overrides.jsonl` with timestamp + scope + reason + CI provenance.
+- `scripts/proactive-suggestions.json` — per-run registry of routing prose + voice triggers extracted from skill frontmatter during catalog trim. Agents pull on demand instead of paying for it always-loaded.
+- `--catalog-mode=full` build flag — restores v1.44 legacy multi-line catalog descriptions. Use when debugging routing regressions or when shipping skills to hosts that depend on the legacy fat catalog.
+- `--explain-level=terse` build flag — opt-in compression of `## Writing Style` + `## Completeness Principle` + `## Confusion Protocol` + `## Context Health` preamble sections. Default build keeps the runtime-conditional behavior intact (the model still skips when `EXPLAIN_LEVEL: terse` appears in the preamble echo); terse build makes the compression structural.
+- `EVALS_BUDGET_HARD_CAP` environment variable (umbrella $30 default) + per-suite `EVALS_BUDGET_HARD_CAP_GATE=$25`, `EVALS_BUDGET_HARD_CAP_PERIODIC=$70`. Build fails if a single run exceeds; `EVALS_BUDGET_OVERRIDE_REASON` env unblocks + audit-logs.
+
+**Changed**
+- Skill frontmatter `description:` blocks across 51 skills trimmed to a single lead sentence + `(gstack)` tag. Routing prose ("Use when asked to...", "Proactively suggest...") and voice triggers moved to a `## When to invoke` body section in each SKILL.md. Always-loaded catalog cost drops ~56%.
+- Jargon list (`scripts/jargon-list.json`, 80 terms) no longer inlined into every tier-2+ skill. `## Writing Style` now references the JSON path; agents Read it once per session on first jargon term encountered. Saves ~70 KB of duplicated text across the corpus.
+- `ResolverEntry` union type in `scripts/resolvers/types.ts` + `unwrapResolver` helper. Resolvers can now be either bare functions (current behavior) or `{ resolve, appliesTo? }` gated entries. `scripts/gen-skill-docs.ts:444` checks the gate before invocation. Infrastructure for future per-skill resolver gating; all current resolvers stay bare functions and work unchanged.
+- `TemplateContext` gains an optional `explainLevel: 'default' | 'terse'` field threaded from the `--explain-level` build flag.
+
+**Fixed**
+- Catalog descriptions no longer collide with adjacent YAML fields (initial implementation produced `description: ... (gstack)allowed-tools:` with no newline; fixed by appending `\n` to the replacement).
+
+**For contributors**
+- New skills require an entry in `test/skill-coverage-matrix.ts` — at minimum referencing `test/skill-coverage-floor.test.ts` in `gate[]`. The CI gate at `test/skill-coverage-matrix.test.ts` fails fast on missing entries.
+- New must-preserve invariants for a skill family go in `PARITY_INVARIANTS` in `test/helpers/parity-harness.ts`. Adding invariants is additive; removing one is a deliberate scope decision.
+- The `scripts/jargon-list.json` is the canonical glossary. Add terms there; gen-skill-docs picks them up automatically on next regen.
+- `test/fixtures/parity-baseline-v1.44.1.json` is the locked v1→v2 reference. Do not modify; capture new snapshots at later tags via `bun run scripts/capture-baseline.ts --tag <name>`.
+
 ## [1.44.1.0] - 2026-05-24
 
 ## **Nine community fixes ship in one bundle.** Office-hours session counter works again, iOS QA tunnels survive macOS 26.x, Windows brain-sync stops dropping artifacts, browse server tells you whether the bind failure was a port collision or a sandbox block.
