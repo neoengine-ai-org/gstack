@@ -390,7 +390,6 @@ Before calling AskUserQuestion, verify:
 - [ ] If you split, you checked dependencies between options before firing the chain
 - [ ] If a per-option Hold fires, you stopped the chain immediately (didn't queue)
 
-
 ## Artifacts Sync (skill start)
 
 ```bash
@@ -488,8 +487,6 @@ else
 fi
 ```
 
-
-
 Privacy stop-gate: if output shows `ARTIFACTS_SYNC: off`, `artifacts_sync_mode_prompted` is `false`, and gbrain is on PATH or `gbrain doctor --fast --json` works, ask once:
 
 > gstack can publish your artifacts (CEO plans, designs, reports) to a private GitHub repo that GBrain indexes across machines. How much should sync?
@@ -515,7 +512,6 @@ At skill END before telemetry:
 "$GSTACK_BIN/gstack-brain-sync" --discover-new 2>/dev/null || true
 "$GSTACK_BIN/gstack-brain-sync" --once 2>/dev/null || true
 ```
-
 
 ## Model-Specific Behavioral Patch (claude)
 
@@ -589,7 +585,6 @@ Applies to AskUserQuestion, user replies, and findings. AskUserQuestion Format i
 - Terse mode (EXPLAIN_LEVEL: terse): no glosses, no outcome-framing layer, shorter responses.
 
 Curated jargon list lives at `$GSTACK_ROOT/scripts/jargon-list.json` (80+ terms). On the first jargon term you encounter this session, Read that file once; treat the `terms` array as the canonical list. The list is repo-owned and may grow between releases.
-
 
 ## Completeness Principle — Boil the Lake
 
@@ -766,8 +761,6 @@ branch name wherever the instructions say "the base branch" or `<default>`.
 
 ---
 
-
-
 # Ship: Fully Automated Ship Workflow
 
 You are running the `/ship` workflow. This is a **non-interactive, fully automated** workflow. Do NOT ask for confirmation at any step. The user said `/ship` which means DO IT. Run straight through and output the PR URL at the end.
@@ -806,8 +799,6 @@ Only *actions* are idempotent:
 Never skip a verification step because a prior `/ship` run already performed it.
 
 ---
-
-
 
 ---
 
@@ -1937,8 +1928,6 @@ Substitute: TIMESTAMP = ISO 8601 datetime, STATUS = "clean" if 0 findings or "is
 
    Include any design findings alongside the code review findings. They follow the same Fix-First flow below.
 
-
-
 ### Step 9.3: Cross-review finding dedup
 
 Before classifying findings, check if any were previously skipped by the user in a prior review on this branch.
@@ -2057,8 +2046,6 @@ For each comment in `comments`:
 
 ---
 
-
-
 ## Capture Learnings
 
 If you discovered a non-obvious pattern, pitfall, or architectural insight during
@@ -2083,8 +2070,6 @@ staleness detection: if those files are later deleted, the learning can be flagg
 
 **Only log genuine discoveries.** Don't log obvious things. Don't log things the user
 already knows. A good test: would this insight save time in a future session? If yes, log it.
-
-
 
 ### Refresh learnings for the headline feature on this branch
 
