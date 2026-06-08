@@ -2312,3 +2312,25 @@ from there.
 **Effort:** M (human ~2d, CC ~4h).
 
 **Depends on:** `transcript-section-logger.ts` real-session-drift rework.
+
+### P2: Harden behavioral section-loading test hermeticity
+
+**What:** `captureSectionReads` in `test/helpers/auq-sdk-capture.ts` accepts ANY
+Read whose path matches `sections/<file>.md`. The skeleton's STOP-Read directive
+points at the gstack-root install path (`scripts/resolvers/sections.ts` builds it
+from `ctx.paths.skillRoot`), not the planted fixture copy. So a run can satisfy
+the section-read assertion by reading the GLOBAL install's section instead of the
+hermetic fixture.
+
+**Why:** A behavioral test that passes by reading the global install doesn't prove
+THIS branch's carved section loads. If the fixture's section were broken but the
+global install's weren't, the test would still pass.
+
+**Context:** Codex outside-voice finding on the carve-guard ship (v1.57.0.0).
+Pre-existing in `auq-sdk-capture.ts` — affects `skill-e2e-ship-section-loading`,
+`skill-e2e-plan-ceo-review-section-loading`, and the new
+`carve-section-loading.test.ts`. Fix: match the fixture's ABSOLUTE sections path
+(the `planDir` copy), not a bare `sections/<file>.md` regex; or rewrite the STOP
+path to the fixture during the run.
+
+**Effort:** S (human ~3h, CC ~30min). **Depends on:** None.

@@ -1,3 +1,5 @@
+**Scope gate (read first).** This section holds every scope-dependent phase (2-11), but you run ONLY the phases your resolved mode selected back in `## Mode Resolution` (always-loaded in the skeleton). Phases 0, 1, 12, 13, 14 always run; Phases 2-11 are scope-gated. "Execute in full" means work through this section applying that selection, NOT run a phase your mode did not select just because its prose lives here. Example: `--owasp` runs Phase 9 from this section, not Phases 2-8/10/11.
+
 ### Phase 2: Secrets Archaeology
 
 Scan git history for leaked credentials, check tracked `.env` files, find CI configs with inline secrets.

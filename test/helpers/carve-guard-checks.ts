@@ -114,12 +114,14 @@ export function checkOrdering(root: string, guard: CarveGuard): string[] {
   // 5. The post-STOP gate fires after the last STOP (review skills).
   const gate = guard.staticInvariants.gateAfterStop;
   if (gate) {
-    const firstStop = skeleton.indexOf(STOP);
+    // Gate must fire after the LAST STOP (once all section work returns), not just
+    // the first — for multi-STOP skeletons a gate between two STOPs is stranded.
+    const lastStop = skeleton.lastIndexOf(STOP);
     const lastGate = skeleton.lastIndexOf(gate);
     if (lastGate < 0) {
       failures.push(`gateAfterStop marker missing from skeleton: "${gate}"`);
-    } else if (firstStop >= 0 && lastGate < firstStop) {
-      failures.push(`gateAfterStop "${gate}" appears before the STOP (stranded above it)`);
+    } else if (lastStop >= 0 && lastGate < lastStop) {
+      failures.push(`gateAfterStop "${gate}" appears before the last STOP (stranded above it)`);
     }
   }
 
