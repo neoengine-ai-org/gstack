@@ -151,6 +151,29 @@ describe('gstack-config', () => {
     expect(content).toContain('skip_eng_review:');
   });
 
+  // ─── codex_reviews (paid-calls switch: reject-on-set, preserve existing) ──
+  test('codex_reviews defaults to enabled', () => {
+    const { exitCode, stdout } = run(['get', 'codex_reviews']);
+    expect(exitCode).toBe(0);
+    expect(stdout).toBe('enabled');
+  });
+
+  test('codex_reviews accepts enabled and disabled', () => {
+    expect(run(['set', 'codex_reviews', 'disabled']).exitCode).toBe(0);
+    expect(run(['get', 'codex_reviews']).stdout).toBe('disabled');
+    expect(run(['set', 'codex_reviews', 'enabled']).exitCode).toBe(0);
+    expect(run(['get', 'codex_reviews']).stdout).toBe('enabled');
+  });
+
+  test('codex_reviews rejects an invalid value and preserves the existing one', () => {
+    run(['set', 'codex_reviews', 'disabled']);
+    const { exitCode, stderr } = run(['set', 'codex_reviews', 'disabledd']);
+    expect(exitCode).not.toBe(0); // rejected, not warn-and-default
+    expect(stderr).toContain('not recognized');
+    // existing value must be untouched — a typo never silently flips paid Codex on/off
+    expect(run(['get', 'codex_reviews']).stdout).toBe('disabled');
+  });
+
   test('header written only once, not duplicated on second set', () => {
     run(['set', 'foo', 'bar']);
     run(['set', 'baz', 'qux']);
