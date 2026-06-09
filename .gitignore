@@ -37,3 +37,6 @@ supabase/.temp/
 
 # Throughput analysis — local-only, regenerate via scripts/garry-output-comparison.ts
 docs/throughput-*.json
+
+# gbrain local source-staging dir (capability checks, source clones) — runtime artifact
+.sources/
