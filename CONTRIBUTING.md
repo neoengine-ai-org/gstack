@@ -106,6 +106,22 @@ bun run build
 bin/dev-teardown
 ```
 
+### Brain-aware blocks in a dev workspace (gbrain installed)
+
+If gbrain is installed and usable (`bin/gstack-gbrain-detect --is-ok` exits 0),
+`bin/dev-setup` keeps your tracked `SKILL.md` files canonical and renders the
+brain-aware variant (the `GBRAIN_CONTEXT_LOAD` / `GBRAIN_SAVE_RESULTS` blocks)
+into `.claude/gstack-rendered/` (gitignored, per-workspace). It then repoints the
+workspace's `SKILL.md` symlinks at that render, so your Claude sessions get the
+full gbrain experience while `git status` stays clean. Under the hood, dev-setup
+passes `GSTACK_SKIP_GBRAIN_REGEN=1` inline to the nested `./setup` (so it never
+dirties tracked source) and runs `gen:skill-docs:user --out-dir .claude/gstack-rendered`,
+which rewrites only the section-base paths to point at the render. `bin/dev-teardown`
+removes the render. To make the blocks live across your *other* projects' Claude
+sessions, run `gstack-config gbrain-refresh`, which renders them into the global
+install (`~/.claude/skills/gstack`), guarded so it never touches a symlinked or
+non-gstack directory.
+
 ## Testing & evals
 
 ### Setup
@@ -334,8 +350,8 @@ If you're using [Conductor](https://conductor.build) to run multiple Claude Code
 
 | Hook | Script | What it does |
 |------|--------|-------------|
-| `setup` | `bin/dev-setup` | Copies `.env` from main worktree, installs deps, symlinks skills, runs `./setup` non-interactively |
-| `archive` | `bin/dev-teardown` | Removes skill symlinks, cleans up `.claude/` directory |
+| `setup` | `bin/dev-setup` | Copies `.env` from main worktree, installs deps, symlinks skills, runs `./setup` non-interactively, and (if gbrain is installed) renders brain-aware blocks into `.claude/gstack-rendered/` without dirtying tracked source |
+| `archive` | `bin/dev-teardown` | Removes skill symlinks, the `.claude/gstack-rendered/` render, and cleans up `.claude/` directory |
 
 When Conductor creates a new workspace, `bin/dev-setup` runs automatically. It detects the main worktree (via `git worktree list`), copies your `.env` so API keys carry over, and sets up dev mode — no manual steps needed.
 
