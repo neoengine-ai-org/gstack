@@ -17,7 +17,9 @@ import {
 const silent = { warn: () => {} };
 
 // 6.5in content box → threshold = 6.5 × 96 × 2.5 = 1560 CSS px.
-const OPTS = { contentWidthIn: 6.5, ...silent };
+// Letter landscape content box: 9in wide × 6.5in tall.
+const LANDSCAPE = { contentWIn: 9, contentHIn: 6.5 };
+const OPTS = { contentWidthIn: 6.5, landscape: LANDSCAPE, ...silent };
 
 function img(attrs: string): string {
   return `<p><img ${attrs}></p>`;
@@ -131,20 +133,34 @@ describe("auto-landscape: negative cases (the load-bearing ones)", () => {
 });
 
 describe("auto-landscape: positive cases", () => {
-  test("wide + alt hint + over threshold promotes and wraps", () => {
+  test("wide + alt hint + over threshold promotes, wraps, and vertically centers", () => {
     const warnings: string[] = [];
     const r = applyImagePolicy(
       img(`src="x" alt="architecture diagram" data-gstack-px-width="2400" data-gstack-px-height="1000"`),
-      { contentWidthIn: 6.5, warn: (m) => warnings.push(m) },
+      { contentWidthIn: 6.5, landscape: LANDSCAPE, warn: (m) => warnings.push(m) },
+    );
+    expect(r.hasLandscape).toBe(true);
+    // placed height = 9in × (1000/2400) = 3.75in → margin-top = (6.5−3.75)/2 ≈ 1.38in
+    expect(r.html).toContain('<div class="page-wide" style="margin-top: 1.38in"><img');
+    expect(r.html).not.toContain("<p><img");
+    expect(warnings[0]).toContain("landscape");
+  });
+
+  test("directive-forced tall block that fills the page gets no centering margin", () => {
+    // aspect 0.9 → placed height 9×0.9 = 8.1in > 6.5in box → margin clamps to 0
+    const r = applyImagePolicy(
+      img(`src="x" data-gstack-page="landscape" data-gstack-px-width="1000" data-gstack-px-height="900"`),
+      OPTS,
     );
     expect(r.hasLandscape).toBe(true);
     expect(r.html).toContain('<div class="page-wide"><img');
-    expect(r.html).not.toContain("<p><img");
-    expect(warnings[0]).toContain("landscape");
+    expect(r.html).not.toContain("margin-top");
   });
   test("page=landscape forces promotion regardless of size", () => {
     const r = applyImagePolicy(img(`src="x" data-gstack-page="landscape"`), OPTS);
     expect(r.hasLandscape).toBe(true);
+    // no intrinsic dims → no centering guess, top placement
+    expect(r.html).toContain('<div class="page-wide"><img');
   });
   test("alt hint matches whole words only", () => {
     const r = applyImagePolicy(
@@ -159,10 +175,11 @@ describe("auto-landscape: diagram figures", () => {
   const fig = (svgAttrs: string, figAttrs = "") =>
     `<figure class="diagram" role="img" aria-label="d"${figAttrs}>\n<svg ${svgAttrs}><g/></svg>\n</figure>`;
 
-  test("wide diagram via viewBox promotes (provenance automatic, no alt needed)", () => {
+  test("wide diagram via viewBox promotes and centers (provenance automatic, no alt needed)", () => {
     const r = applyImagePolicy(fig(`width="100%" viewBox="0 0 2050 600"`), OPTS);
     expect(r.hasLandscape).toBe(true);
-    expect(r.html).toContain('<div class="page-wide"><figure');
+    // placed height = 9 × 600/2050 ≈ 2.63in → margin-top = (6.5−2.63)/2 ≈ 1.93in
+    expect(r.html).toContain('<div class="page-wide" style="margin-top: 1.93in"><figure');
   });
   test("normal flowchart stays portrait", () => {
     const r = applyImagePolicy(fig(`width="100%" viewBox="0 0 800 400"`), OPTS);

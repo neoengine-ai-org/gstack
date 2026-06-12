@@ -327,6 +327,33 @@ describe("printCss", () => {
     expect(css).toMatch(/@bottom-center\s*\{\s*content:\s*counter\(page\)/);
   });
 
+  // Zero image truncation, ever: the cap must be a GLOBAL img rule. Markdown
+  // images render as <p><img> (no figure), so a figure-scoped cap alone lets
+  // wide screenshots run off the page edge — the exact regression this pins.
+  test("emits a global img max-width cap (zero truncation invariant)", () => {
+    const css = printCss();
+    expect(css).toMatch(/(^|\n)img\s*\{\s*max-width:\s*100%;\s*height:\s*auto;\s*\}/);
+  });
+
+  test("typography floor: body 12pt, poster cover, readable TOC", () => {
+    const css = printCss({ cover: true, toc: true });
+    expect(css).toContain("font-size: 12pt"); // body
+    expect(css).toMatch(/\.cover h1\.cover-title\s*\{[^}]*font-size:\s*56pt/);
+    expect(css).toMatch(/\.cover \.cover-meta\s*\{[^}]*font-size:\s*13pt/);
+    expect(css).toMatch(/\.toc li\s*\{[^}]*font-size:\s*12pt/);
+  });
+
+  test("page-wide carries the named page and NO height/flex centering", () => {
+    const css = printCss();
+    expect(css).toMatch(/\.page-wide\s*\{[^}]*page:\s*wide/);
+    // Centering is computed by image-policy as an inline margin-top. CSS
+    // flex/min-height centering fragments into phantom empty landscape pages
+    // in Chromium — this pins the regression (landscape-gate: 5 pages for 3
+    // promotions, bisected to min-height at any value).
+    expect(css).not.toMatch(/\.page-wide\s*\{[^}]*min-height/);
+    expect(css).not.toMatch(/\.page-wide\s*\{[^}]*flex/);
+  });
+
   test("font stacks include Liberation Sans adjacent to Helvetica", () => {
     const css = printCss({ confidential: true });
     // Body stack
