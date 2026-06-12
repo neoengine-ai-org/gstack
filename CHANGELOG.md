@@ -1,5 +1,80 @@
 # Changelog
 
+## [1.58.0.0] - 2026-06-11
+
+## **In Conductor, gstack stops fighting a broken tool and just asks in plain text.**
+## **Every decision becomes a prose brief you answer with a letter, and a hook makes sure of it.**
+
+Conductor disables the native AskUserQuestion tool and routes through an MCP
+variant that frequently dies with `[Tool result missing due to internal error]`.
+The old behavior tried that flaky tool first and only fell back to text after it
+failed, which meant stalled prompts and dropped questions. Now, when gstack detects
+a Conductor session, it skips the tool entirely and renders every decision as a
+plain-text brief: a labeled question, a recommendation, completeness scores per
+option, and an instruction to reply with a letter. Your settled `/plan-tune`
+preferences still auto-decide first, so you are not asked about things you already
+told gstack to stop asking. Destructive confirmations now demand an explicit typed
+answer and refuse to proceed on a vague reply. And because the tool is never called
+on this path, gstack logs the decision itself so `/plan-tune` keeps learning.
+
+This is enforced in three layers, and the third one actually ships: a PreToolUse
+hook denies any AskUserQuestion call in Conductor and redirects to prose. The hook
+is now installed for Conductor sessions even in non-interactive setup (it used to be
+skipped), and an upgrade migration adds it to existing Conductor installs.
+
+### The numbers that matter
+
+Verified by the deterministic hook unit suite (`test/question-preference-hook.test.ts`)
+and the resolver/preamble guards, all green this run.
+
+| Metric | Before | After | Δ |
+|--------|--------|-------|---|
+| AskUserQuestion calls in Conductor | flaky tool, then fallback | 0 (prose by default) | eliminated |
+| Layer enforcing "no tool call" | guidance only | guidance + signal + PreToolUse hook | +2 |
+| Hook installed in Conductor non-interactive setup | no | yes | fixed |
+| `/plan-tune` learning on the prose path | lost (PostToolUse never fired) | captured via gstack-question-log | restored |
+| Destructive confirmation gate in text | "reply with a letter" | explicit typed confirmation, no vague proceed | hardened |
+
+The sharpest fix is the silent one: headless evals running inside Conductor used to
+risk rendering a prose question to nobody. The Conductor signal is now gated so a
+headless session still BLOCKs and waits, exactly as before.
+
+### What this means for Conductor users
+
+Questions just work. You answer in the chat the way you already do, settled
+preferences are honored without re-asking, and irreversible actions ask for a real
+confirmation instead of a one-letter shrug. Run `gstack-config set plan_tune_hooks no`
+if you want guidance-only prose without the enforcing hook.
+
+### Itemized changes
+
+#### Added
+- Conductor-default prose rendering for all AskUserQuestion decisions, signalled by
+  `CONDUCTOR_SESSION` in the preamble (gated on a non-headless session).
+- A one-way/destructive prose rule (explicit typed confirmation, never proceed on a
+  vague reply) and a typed-reply continuation protocol for split-chain questions.
+- `lib/is-conductor.ts` — shared, call-time Conductor detection.
+- Upgrade migration `v1.58.0.0` that registers the PreToolUse hook for existing
+  Conductor installs.
+
+#### Changed
+- The PreToolUse `question-preference-hook` now denies AskUserQuestion in Conductor
+  and redirects to a prose brief (transport avoidance), while never-ask auto-decide
+  preferences still take precedence and non-Conductor behavior is unchanged.
+- `setup` installs the PreToolUse hook for Conductor sessions even on the
+  non-interactive fall-through, without overriding an explicit opt-out.
+
+#### Fixed
+- Conductor prose decisions are now logged via `gstack-question-log`, so `/plan-tune`
+  history and learning survive on the path where the tool is never called.
+
+#### For contributors
+- `test/skill-e2e-auto-decide-preserved.test.ts` now passes `GSTACK_HOME` into the
+  PTY run, fixing a latent bug where the seeded never-ask preference was never read.
+- New `test/skill-e2e-conductor-prose.test.ts` (periodic) plus deterministic
+  Conductor cases in the hook unit suite; affected carve skeleton caps bumped to
+  absorb the always-loaded AskUserQuestion Format additions.
+
 ## [1.57.10.0] - 2026-06-10
 
 ## **Codex review now runs by default everywhere it matters.**
