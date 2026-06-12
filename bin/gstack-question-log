@@ -27,6 +27,12 @@
 # Append-only JSONL. Dedup is at read time in gstack-question-sensitivity --read-log.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Windows git-bash (#1950): pwd yields a POSIX path (/c/Users/...), which Bun
+# on Windows cannot resolve as an ES module specifier in bun -e imports.
+# cygpath -m converts to C:/Users/... which Bun accepts.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) command -v cygpath >/dev/null 2>&1 && SCRIPT_DIR="$(cygpath -m "$SCRIPT_DIR")" ;;
+esac
 eval "$("$SCRIPT_DIR/gstack-slug" 2>/dev/null)"
 # GSTACK_STATE_ROOT takes precedence over GSTACK_HOME (test isolation per D16).
 GSTACK_HOME="${GSTACK_STATE_ROOT:-${GSTACK_HOME:-$HOME/.gstack}}"
