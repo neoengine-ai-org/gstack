@@ -37,6 +37,13 @@
 export interface ImagePolicyOptions {
   /** Physical content-box width in inches (page width minus margins). */
   contentWidthIn: number;
+  /**
+   * Landscape named-page content box (inches). Used to vertically center a
+   * promoted block via a computed inline margin-top — CSS flex/min-height
+   * centering fragments into phantom landscape pages in Chromium, so the
+   * margin is computed here from the block's known aspect ratio instead.
+   */
+  landscape: { contentWIn: number; contentHIn: number };
   warn: (msg: string) => void;
 }
 
@@ -124,7 +131,9 @@ export function applyImagePolicy(html: string, opts: ImagePolicyOptions): ImageP
     if (!decision.promote) return full;
     hasLandscape = true;
     opts.warn(`promoting image to a landscape page (${decision.reason})`);
-    return `<div class="page-wide">${tag}</div>`;
+    const w = num(attrValue(tag, "data-gstack-px-width"));
+    const h = num(attrValue(tag, "data-gstack-px-height"));
+    return wrapPageWide(tag, w && h ? h / w : null, opts.landscape);
   });
 
   // 2c. landscape promotion — rendered diagram figures (provenance is
@@ -137,11 +146,30 @@ export function applyImagePolicy(html: string, opts: ImagePolicyOptions): ImageP
       if (!decision.promote) return figure;
       hasLandscape = true;
       opts.warn(`promoting diagram to a landscape page (${decision.reason})`);
-      return `<div class="page-wide">${figure}</div>`;
+      const dims = svgCssDims(figure);
+      return wrapPageWide(figure, dims ? dims.height / dims.width : null, opts.landscape);
     },
   );
 
   return { html: out, hasLandscape };
+}
+
+/**
+ * Wrap a promoted block in the wide-page div, vertically centered via a
+ * computed margin-top: placed height = landscape content width × aspect,
+ * centered in the landscape content height. Unknown aspect → no margin
+ * (top placement beats a wrong guess).
+ */
+function wrapPageWide(
+  inner: string,
+  aspectHoverW: number | null,
+  landscape: { contentWIn: number; contentHIn: number },
+): string {
+  if (!aspectHoverW) return `<div class="page-wide">${inner}</div>`;
+  const placedHIn = landscape.contentWIn * aspectHoverW;
+  const marginIn = Math.max(0, (landscape.contentHIn - placedHIn) / 2);
+  if (marginIn < 0.1) return `<div class="page-wide">${inner}</div>`;
+  return `<div class="page-wide" style="margin-top: ${marginIn.toFixed(2)}in">${inner}</div>`;
 }
 
 interface PromotionDecision {

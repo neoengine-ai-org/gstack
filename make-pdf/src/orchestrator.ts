@@ -30,6 +30,7 @@ import {
   convertDiagnosticsForDocx,
   extractDiagramFences,
   inlineLocalImages,
+  landscapeContentBox,
   rasterizeDiagramFigures,
   renderFenceSlots,
   substituteSlots,
@@ -170,7 +171,11 @@ export async function generate(opts: GenerateOptions): Promise<string> {
     progress.end("Inlining images");
 
     // Width directives + conservative auto-landscape (image-policy).
-    const policy = applyImagePolicy(finalHtml, { contentWidthIn, warn });
+    const policy = applyImagePolicy(finalHtml, {
+      contentWidthIn,
+      landscape: landscapeContentBox(opts),
+      warn,
+    });
     finalHtml = policy.html;
     hasLandscape = policy.hasLandscape;
 

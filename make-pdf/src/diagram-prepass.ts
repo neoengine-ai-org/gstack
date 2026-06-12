@@ -661,6 +661,39 @@ export function contentWidthInches(opts: {
   return Math.max(1, pageW - left - right);
 }
 
+const PAGE_HEIGHTS_IN: Record<string, number> = {
+  letter: 11,
+  a4: 11.69,
+  legal: 14,
+  tabloid: 17,
+};
+
+/**
+ * Content box of the rotated (landscape) named page: portrait page HEIGHT
+ * becomes the landscape width; portrait WIDTH becomes the landscape height.
+ * Used by image-policy to vertically center promoted blocks.
+ */
+export function landscapeContentBox(opts: {
+  pageSize?: string;
+  margins?: string;
+  marginLeft?: string;
+  marginRight?: string;
+  marginTop?: string;
+  marginBottom?: string;
+}): { contentWIn: number; contentHIn: number } {
+  const size = opts.pageSize ?? "letter";
+  const pageH = PAGE_HEIGHTS_IN[size] ?? 11;
+  const pageW = PAGE_WIDTHS_IN[size] ?? 8.5;
+  const left = dimToInches(opts.marginLeft ?? opts.margins, 1);
+  const right = dimToInches(opts.marginRight ?? opts.margins, 1);
+  const top = dimToInches(opts.marginTop ?? opts.margins, 1);
+  const bottom = dimToInches(opts.marginBottom ?? opts.margins, 1);
+  return {
+    contentWIn: Math.max(1, pageH - left - right),
+    contentHIn: Math.max(1, pageW - top - bottom),
+  };
+}
+
 // ─── tiny helpers ─────────────────────────────────────────────────────
 
 function escapeHtml(s: string): string {

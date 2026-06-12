@@ -122,15 +122,22 @@ function pageRules(size: string, margin: string, opts: PrintCssOptions): string 
     // Landscape named page for promoted wide diagrams/images (image-policy).
     // Chromium-only — exactly the engine this pipeline always prints with.
     // Honored only when the print call passes preferCSSPageSize (orchestrator
-    // sets it when a promotion exists).
+    // sets it when a promotion exists). The block is flex-centered: a diagram
+    // alone on a rotated page should sit in the middle, not hug the header.
     `@page wide {`,
     `  size: ${size} landscape;`,
     `  margin: ${margin};`,
     `}`,
+    // No explicit break-before/after (the page-name CHANGE already forces a
+    // break on both sides) and NO height/flex centering: a flex .page-wide
+    // with min-height fragments into a phantom empty landscape page in
+    // Chromium (landscape-gate counted 5 pages for 3 promotions; bisected to
+    // min-height at any value). Vertical centering is done by image-policy
+    // instead — it knows each promoted block's aspect ratio and emits an
+    // inline margin-top, which fragmentation handles fine.
     `.page-wide {`,
     `  page: wide;`,
-    `  break-before: page;`,
-    `  break-after: page;`,
+    `  text-align: center;`,
     `}`,
     `.page-wide img, .page-wide svg { width: 100%; height: auto; max-width: none; }`,
     `.page-wide figure.diagram > svg { max-width: none; }`,
@@ -157,13 +164,23 @@ export function screenCss(): string {
 function rootTypography(): string {
   return [
     `html { lang: en; }`,
+    // Zero image truncation, ever: every image caps at the content box,
+    // whatever element it lives in. Markdown images render as <p><img> (no
+    // figure), so a figure-scoped cap alone lets a 1900px screenshot run off
+    // the page edge. .page-wide deliberately overrides to fill its landscape
+    // box — still bounded, never clipped.
+    `img { max-width: 100%; height: auto; }`,
     `body {`,
     `  font-family: ${SANS_STACK}, ${CJK_STACK}, ${EMOJI_FAMILIES}, sans-serif;`,
-    `  font-size: 11pt;`,
+    `  font-size: 12pt;`,
     `  line-height: 1.5;`,
     `  color: #111;`,
     `  background: white;`,
-    `  hyphens: auto;`,
+    // No auto-hyphenation: it puts real "dif-\nferent" breaks into the PDF
+    // text layer, and clean copy-paste is the product contract (the
+    // combined-gate caught this the moment 12pt body made lines wrap).
+    // Left-aligned rag doesn't need hyphenation.
+    `  hyphens: manual;`,
     `  font-variant-ligatures: common-ligatures;`,
     `  font-kerning: normal;`,
     `  text-rendering: geometricPrecision;`,
@@ -176,45 +193,47 @@ function rootTypography(): string {
 function coverRules(enabled: boolean): string {
   if (!enabled) return "";
   return [
+    // Poster scale: the cover is the one page where type should feel huge.
     `.cover {`,
     `  page: first;`,
     `  page-break-after: always;`,
     `  break-after: page;`,
     `  text-align: left;`,
+    `  padding-top: 1.4in;`,
     `}`,
     `.cover .eyebrow {`,
-    `  font-size: 9pt;`,
+    `  font-size: 11pt;`,
     `  letter-spacing: 0.2em;`,
     `  text-transform: uppercase;`,
     `  color: #666;`,
     `  margin: 0 0 36pt;`,
     `}`,
     `.cover h1.cover-title {`,
-    `  font-size: 32pt;`,
-    `  line-height: 1.15;`,
+    `  font-size: 56pt;`,
+    `  line-height: 1.08;`,
     `  font-weight: 700;`,
-    `  letter-spacing: -0.01em;`,
-    `  margin: 0 0 18pt;`,
-    `  max-width: 5.5in;`,
+    `  letter-spacing: -0.02em;`,
+    `  margin: 0 0 24pt;`,
+    `  max-width: 6in;`,
     `  text-align: left;`,
     `}`,
     `.cover .cover-subtitle {`,
-    `  font-size: 14pt;`,
-    `  line-height: 1.4;`,
+    `  font-size: 18pt;`,
+    `  line-height: 1.35;`,
     `  font-weight: 400;`,
     `  color: #333;`,
     `  margin: 0 0 36pt;`,
-    `  max-width: 5in;`,
+    `  max-width: 5.5in;`,
     `  text-align: left;`,
     `}`,
     `.cover hr.rule {`,
     `  width: 2.5in;`,
     `  height: 0;`,
     `  border: 0;`,
-    `  border-top: 1px solid #111;`,
-    `  margin: 0 0 18pt 0;`,
+    `  border-top: 1.5px solid #111;`,
+    `  margin: 0 0 24pt 0;`,
     `}`,
-    `.cover .cover-meta { font-size: 10pt; line-height: 1.6; color: #333; text-align: left; }`,
+    `.cover .cover-meta { font-size: 13pt; line-height: 1.6; color: #333; text-align: left; }`,
     `.cover .cover-meta strong { font-weight: 700; }`,
   ].join("\n");
 }
@@ -224,12 +243,12 @@ function tocRules(enabled: boolean): string {
   return [
     `.toc { page-break-after: always; break-after: page; }`,
     `.toc h2 {`,
-    `  font-size: 13pt;`,
+    `  font-size: 16pt;`,
     `  text-transform: uppercase;`,
     `  letter-spacing: 0.15em;`,
-    `  color: #666;`,
-    `  font-weight: 600;`,
-    `  margin: 0 0 0.5in;`,
+    `  color: #444;`,
+    `  font-weight: 700;`,
+    `  margin: 0 0 0.4in;`,
     `}`,
     `.toc ol {`,
     `  list-style: none;`,
@@ -240,14 +259,14 @@ function tocRules(enabled: boolean): string {
     `  display: flex;`,
     `  align-items: baseline;`,
     `  gap: 0.25in;`,
-    `  font-size: 11pt;`,
-    `  line-height: 2;`,
-    `  padding: 4pt 0;`,
+    `  font-size: 12pt;`,
+    `  line-height: 1.7;`,
+    `  padding: 3pt 0;`,
     `}`,
     `.toc li .toc-title { flex: 0 0 auto; }`,
     `.toc li .toc-dots { flex: 1 1 auto; border-bottom: 1px dotted #aaa; margin: 0 6pt; transform: translateY(-4pt); }`,
     `.toc li .toc-page { flex: 0 0 auto; color: #666; font-variant-numeric: tabular-nums; }`,
-    `.toc li.level-2 { padding-left: 0.35in; font-size: 10pt; }`,
+    `.toc li.level-2 { padding-left: 0.35in; font-size: 11pt; }`,
     `.toc li a { color: inherit; text-decoration: none; }`,
   ].join("\n");
 }
@@ -262,7 +281,7 @@ function chapterRules(noChapterBreaks: boolean): string {
   return [
     breakRule,
     `h1 {`,
-    `  font-size: 22pt;`,
+    `  font-size: 26pt;`,
     `  line-height: 1.2;`,
     `  font-weight: 700;`,
     `  letter-spacing: -0.01em;`,
@@ -270,9 +289,9 @@ function chapterRules(noChapterBreaks: boolean): string {
     `  break-after: avoid;`,
     `  page-break-after: avoid;`,
     `}`,
-    `h2 { font-size: 15pt; line-height: 1.3; font-weight: 700; margin: 24pt 0 6pt; break-after: avoid; page-break-after: avoid; }`,
-    `h3 { font-size: 12pt; line-height: 1.4; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #333; margin: 18pt 0 4pt; break-after: avoid; page-break-after: avoid; }`,
-    `h4 { font-size: 11pt; font-weight: 700; margin: 12pt 0 4pt; break-after: avoid; page-break-after: avoid; }`,
+    `h2 { font-size: 18pt; line-height: 1.3; font-weight: 700; margin: 26pt 0 8pt; break-after: avoid; page-break-after: avoid; }`,
+    `h3 { font-size: 13.5pt; line-height: 1.4; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #333; margin: 20pt 0 5pt; break-after: avoid; page-break-after: avoid; }`,
+    `h4 { font-size: 12pt; font-weight: 700; margin: 14pt 0 5pt; break-after: avoid; page-break-after: avoid; }`,
   ].join("\n");
 }
 
@@ -287,7 +306,7 @@ function blockRules(): string {
     `  orphans: 3;`,
     `}`,
     `p:first-child { margin-top: 0; }`,
-    `p.lead { font-size: 13pt; line-height: 1.45; color: #222; margin: 0 0 18pt; }`,
+    `p.lead { font-size: 14pt; line-height: 1.45; color: #222; margin: 0 0 18pt; }`,
   ].join("\n");
 }
 
@@ -308,7 +327,7 @@ function codeRules(): string {
   return [
     `code {`,
     `  font-family: "SF Mono", Menlo, Consolas, monospace;`,
-    `  font-size: 9.5pt;`,
+    `  font-size: 10.5pt;`,
     `  background: #f4f4f4;`,
     `  padding: 1pt 3pt;`,
     `  border-radius: 2pt;`,
@@ -316,7 +335,7 @@ function codeRules(): string {
     `}`,
     `pre {`,
     `  font-family: "SF Mono", Menlo, Consolas, monospace;`,
-    `  font-size: 9pt;`,
+    `  font-size: 10pt;`,
     `  line-height: 1.4;`,
     `  background: #f7f7f5;`,
     `  padding: 10pt 12pt;`,
@@ -356,7 +375,7 @@ function figureRules(): string {
   return [
     `figure { margin: 12pt 0; }`,
     `figure img { display: block; max-width: 100%; height: auto; }`,
-    `figcaption { font-size: 9pt; color: #666; margin-top: 6pt; font-style: italic; }`,
+    `figcaption { font-size: 10pt; color: #666; margin-top: 6pt; font-style: italic; }`,
     // Diagram figures (diagram-prepass): rendered mermaid/excalidraw SVG.
     // SVGs scale to the content box and never split across pages.
     `figure.diagram { break-inside: avoid; text-align: center; }`,
@@ -374,7 +393,7 @@ function figureRules(): string {
 
 function tableRules(): string {
   return [
-    `table { width: 100%; border-collapse: collapse; margin: 12pt 0; font-size: 10pt; }`,
+    `table { width: 100%; border-collapse: collapse; margin: 12pt 0; font-size: 11pt; }`,
     `th, td { border-bottom: 0.5pt solid #ccc; padding: 5pt 8pt; text-align: left; vertical-align: top; }`,
     `th { font-weight: 700; border-bottom: 1pt solid #111; background: transparent; }`,
   ].join("\n");
