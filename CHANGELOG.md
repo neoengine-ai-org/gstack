@@ -1,5 +1,111 @@
 # Changelog
 
+## [1.57.11.0] - 2026-06-12
+
+## **Six community-reported failure classes closed in one wave.**
+## **Silent data loss, fake-zero dashboards, and a fail-open push guard are gone.**
+
+This release is a fix wave for the highest-priority community reports. The
+theme is honesty under failure: every surface that used to fail silently or
+report a reassuring fake value now either works, proceeds with a warning, or
+says "unknown" out loud. Windows users get their AI-logged learnings back,
+Supabase transaction-pooler users get working gbrain writes back, and the
+credential pre-push guard now blocks the exact cases it used to wave through.
+
+### The numbers that matter
+
+Source: the issues closed by this branch and `git diff main...HEAD --stat`
+(37 files, +1786/-196; 14 test files, +1120 test lines). Reproduce any row
+with `bun test` plus the issue's repro steps.
+
+| Surface | Before | After |
+|---|---|---|
+| gbrain writes on Supabase 6543 poolers (#1965) | 100% failed ("prepared statement does not exist") | work |
+| Slow-but-healthy engine, probe > deadline (#1964) | misread as broken config, sync silently skipped | proceeds with a warning, deadline tunable |
+| AI-logged learnings on Windows git-bash (#1950) | 100% silently dropped | written, errors print |
+| Dashboards during a backend outage (#1947) | "0 attacks" / "0 installs" | "unknown", stale snapshots labeled |
+| Push with a diff git can't compute (#1946) | allowed unscanned | blocked, escape valve named |
+| Credential patterns in the redaction engine (#1946) | GitLab, HuggingFace, npm, DigitalOcean, GCP SA, Bearer invisible | detected (5 block, Bearer warns) |
+
+The first row is the one to feel: every write on the default Supabase pooler
+port failed with a cryptic Postgres error because gstack force-enabled the
+exact setting its own engine auto-disables. One inverted comment, total write
+breakage. It is gone, and a caller-set override still passes through for the
+rare session-mode pooler on 6543.
+
+### What this means for gstack users
+
+If you run gbrain against Supabase, sync works again, and a slow cold
+connection no longer tells you your config is broken. If you are on Windows,
+`/learn`, `/review`, and `/ship` stop losing every learning they capture. If
+you check the security dashboard, a zero now means zero, verified, and
+nothing else. Upgrade with `/gstack-upgrade`, and deploy the edge function
+(`supabase functions deploy community-pulse`) to get the verified-figures
+marker server-side.
+
+### Itemized changes
+
+#### Fixed
+
+- gbrain: removed the forced `GBRAIN_PREPARE=true` on transaction-mode
+  poolers (port 6543) that broke every write; gbrain's own auto-detection
+  decides, and an explicit caller value passes through (#1965).
+- gbrain: a probe that exceeds its deadline classifies as `timeout` (engine
+  likely healthy but slow) instead of `broken-config`. Sync stages proceed
+  with a warning; `gstack-gbrain-detect --is-ok`, `gen-skill-docs`, and
+  `gstack-config gbrain-refresh` all treat it as usable. Default deadline is
+  15s, tunable via `GSTACK_GBRAIN_PROBE_TIMEOUT_MS` (floored at 1ms so a
+  fractional value can never disable the timeout entirely). Config detection
+  and the status cache honor `GBRAIN_HOME` (#1964).
+- Windows git-bash: `gstack-learnings-log`, `gstack-question-log`, and
+  `gstack-telemetry-log` convert their script paths with `cygpath -m` so the
+  embedded bun imports resolve; validation errors print to stderr instead of
+  vanishing. A behavioral test runs in Windows CI on every push (#1950).
+- `gstack-question-log` shares the audited injection-pattern list from
+  `lib/jsonl-store.ts` instead of a drifted local copy, so prose like
+  "overrides the deterministic table" is accepted while instruction-style
+  injections stay rejected (#1934, completing community PR #1940).
+- community-pulse: database errors now reach the error path (supabase-js
+  returns `{data, error}` without throwing; all five queries check it). On
+  recompute failure the function serves its last good snapshot marked
+  `stale: true`, else returns 503, never fake zeros with HTTP 200. Success
+  responses carry `status: "ok"` so clients can tell verified data from
+  legacy backends (#1947).
+- Both dashboards (`gstack-security-dashboard`, `gstack-community-dashboard`)
+  print "unknown, backend error" on any failure, label stale snapshots and
+  legacy-backend responses, and parse counts with jq (the old grep matched
+  the digit 7 inside `attacks_last_7_days` and misreported every total) (#1947).
+- Telemetry: `error_message` passes through the redaction engine before
+  touching disk. Finding spans become `<REDACTED-{id}>` with triage context
+  kept; PEM/GCP key material (whose patterns match only the header) drops
+  the whole message; any redactor failure stores null, never raw (#1947).
+- Pre-push guard: a diff that cannot be computed (git failure, killed
+  process, oversized buffer) blocks the push with the
+  `GSTACK_REDACT_PREPUSH=skip` escape valve named, instead of passing
+  unscanned. A remote tip missing locally (shallow clone, stale fetch) falls
+  back to scanning more, not blocking (#1946).
+
+#### Added
+
+- Six credential patterns in the redaction engine: GitLab
+  (`glpat-`/`glptt-`/`gldt-`), HuggingFace (`hf_`), npm (`npm_`),
+  DigitalOcean (`dop_v1_`), GCP service-account JSON (blocking), and
+  `Authorization: Bearer` with entropy and header-context calibration
+  (warn-only, so docs examples never cry wolf) (#1946).
+- /ship now owns the pre-push guard install: a one-time offer at push time,
+  then silent install in any repo you ship from once consent is recorded.
+  Repos with a custom `core.hooksPath` (husky) are never touched silently.
+  `./setup` prints a one-line hint only while the choice is unmade.
+
+#### For contributors
+
+- `redactFindingSpans()` joins `lib/redact-engine.ts` as the machine-egress
+  masking path (marker-only pattern ids return null; overlapping spans
+  coalesce before splicing).
+- 60 findings triaged across five review passes (eng review, Codex outside
+  voice, four-specialist review army, and dual-model adversarial review);
+  every accepted finding landed with a regression test in the same commit.
+
 ## [1.57.10.0] - 2026-06-10
 
 ## **Codex review now runs by default everywhere it matters.**
