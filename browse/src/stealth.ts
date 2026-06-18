@@ -47,17 +47,21 @@ import type { BrowserContext } from 'playwright';
  * back to a documented default if the env var is missing or unparseable.
  */
 interface HostProfile {
-  platform: string;
   hwConcurrency: number;
   deviceMemory: number;
 }
 
-function readHostProfile(): HostProfile {
+// Exported for the clamp/fallback unit test. The platform spoof is owned by
+// the UA-CH cmdline switch in buildGStackLaunchArgs (which reads GSTACK_PLATFORM
+// directly), so this profile only carries the values buildStealthScript bakes
+// into the page-world script.
+export function readHostProfile(): HostProfile {
   const env = (globalThis as any).process?.env ?? {};
   const concurrency = Number(env.GSTACK_HW_CONCURRENCY);
   const memory = Number(env.GSTACK_DEVICE_MEMORY);
   return {
-    platform: env.GSTACK_PLATFORM || 'MacIntel',
+    // Clamp to a plausible default: 0/NaN/negative/missing all fall back to 8.
+    // deviceMemory=0 or NaN would be a glaring bot tell, so never report it.
     hwConcurrency: Number.isFinite(concurrency) && concurrency > 0 ? concurrency : 8,
     deviceMemory: Number.isFinite(memory) && memory > 0 ? memory : 8,
   };
@@ -219,9 +223,10 @@ export function buildStealthScript(hw: HostProfile): string {
   } catch {}
 
   // ──── Selenium / Phantom / Nightmare / Playwright global cleanup ────
-  // 25 Selenium globals + Playwright markers + PhantomJS/Nightmare
-  // traces. The inline addInitScript already covers cdc_/__webdriver
-  // dynamic prefixes — this is the static known-name list.
+  // Static known-name list of Selenium / Playwright / PhantomJS / Nightmare
+  // globals. AUTOMATION_ARTIFACT_CLEANUP_SCRIPT (applied right after this on
+  // every path) covers the cdc_/__webdriver dynamic prefixes; this list is the
+  // fixed-name complement.
   try {
     const auto = [
       '__driver_evaluate', '__webdriver_evaluate', '__selenium_evaluate', '__fxdriver_evaluate',
@@ -356,6 +361,9 @@ export const EXTENDED_STEALTH_SCRIPT = `
     // 6. CDP cdc_* property cleanup. Chromium under CDP sets cdc_*-prefixed
     //    globals (driver injection markers); a bot detector finds them by
     //    iterating window keys. Strip all matching keys.
+    //    Note: via applyStealth this is redundant with AUTOMATION_ARTIFACT_
+    //    CLEANUP_SCRIPT (which runs first on every path). Kept so this script
+    //    is self-sufficient if ever applied standalone.
     for (const k of Object.keys(window)) {
       if (k.startsWith('cdc_')) {
         try { delete window[k]; } catch {}
@@ -384,7 +392,7 @@ function extendedModeEnabled(): boolean {
  * which left headless and handoff with the Notification value but not the
  * matching Permissions answer.
  */
-const AUTOMATION_ARTIFACT_CLEANUP_SCRIPT = `(() => {
+export const AUTOMATION_ARTIFACT_CLEANUP_SCRIPT = `(() => {
   // cdc_/__webdriver globals are injected by ChromeDriver/CDP. A detector
   // finds them by iterating window keys. Strip immediately and again after a
   // tick in case they are injected late.
