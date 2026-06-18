@@ -8,10 +8,12 @@
  * These tests only exercise the JS script builder + the static export
  * shapes — fast, hermetic, no chromium launch.
  */
-import { describe, test, expect } from 'bun:test';
+import { describe, test, expect, afterEach } from 'bun:test';
 import {
   buildStealthScript,
   buildGStackLaunchArgs,
+  readHostProfile,
+  AUTOMATION_ARTIFACT_CLEANUP_SCRIPT,
   WEBDRIVER_MASK_SCRIPT,
   STEALTH_LAUNCH_ARGS,
   STEALTH_IGNORE_DEFAULT_ARGS,
@@ -89,7 +91,7 @@ describe('buildStealthScript — T3 Layer C', () => {
     expect(s).not.toMatch(/return 8;.*hardwareConcurrency/);
   });
 
-  test('cleans up Selenium 25 globals + Playwright + Phantom + Nightmare', () => {
+  test('cleans up Selenium + Playwright + Phantom + Nightmare globals', () => {
     const s = buildStealthScript(hw);
     // Spot-check a few from each category
     expect(s).toContain('__webdriver_evaluate');     // Selenium
@@ -239,5 +241,48 @@ describe('backwards-compat exports', () => {
   });
   test('STEALTH_LAUNCH_ARGS still includes blink-features=AutomationControlled', () => {
     expect(STEALTH_LAUNCH_ARGS).toContain('--disable-blink-features=AutomationControlled');
+  });
+});
+
+describe('readHostProfile — clamp/fallback', () => {
+  let savedHw: string | undefined;
+  let savedMem: string | undefined;
+  afterEach(() => {
+    if (savedHw === undefined) delete process.env.GSTACK_HW_CONCURRENCY;
+    else process.env.GSTACK_HW_CONCURRENCY = savedHw;
+    if (savedMem === undefined) delete process.env.GSTACK_DEVICE_MEMORY;
+    else process.env.GSTACK_DEVICE_MEMORY = savedMem;
+  });
+  function withHw(hw: string | undefined, mem: string | undefined): ReturnType<typeof readHostProfile> {
+    savedHw = process.env.GSTACK_HW_CONCURRENCY;
+    savedMem = process.env.GSTACK_DEVICE_MEMORY;
+    if (hw === undefined) delete process.env.GSTACK_HW_CONCURRENCY; else process.env.GSTACK_HW_CONCURRENCY = hw;
+    if (mem === undefined) delete process.env.GSTACK_DEVICE_MEMORY; else process.env.GSTACK_DEVICE_MEMORY = mem;
+    return readHostProfile();
+  }
+
+  test('valid env values pass through', () => {
+    expect(withHw('16', '8')).toEqual({ hwConcurrency: 16, deviceMemory: 8 });
+  });
+
+  test('missing env → default 8/8', () => {
+    expect(withHw(undefined, undefined)).toEqual({ hwConcurrency: 8, deviceMemory: 8 });
+  });
+
+  test('zero / negative / NaN / empty all clamp to 8 (never a 0 or NaN bot tell)', () => {
+    for (const bad of ['0', '-4', 'abc', '']) {
+      const p = withHw(bad, bad);
+      expect(p.hwConcurrency).toBe(8);
+      expect(p.deviceMemory).toBe(8);
+    }
+  });
+});
+
+describe('AUTOMATION_ARTIFACT_CLEANUP_SCRIPT — static shape', () => {
+  test('strips cdc_/__webdriver and maps notifications query to prompt', () => {
+    expect(AUTOMATION_ARTIFACT_CLEANUP_SCRIPT).toContain("startsWith('cdc_')");
+    expect(AUTOMATION_ARTIFACT_CLEANUP_SCRIPT).toContain("startsWith('__webdriver')");
+    expect(AUTOMATION_ARTIFACT_CLEANUP_SCRIPT).toContain("name === 'notifications'");
+    expect(AUTOMATION_ARTIFACT_CLEANUP_SCRIPT).toContain("state: 'prompt'");
   });
 });

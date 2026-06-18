@@ -162,6 +162,47 @@ describe('applyStealth — context level', () => {
       await page.close();
     }
   });
+
+  test('toString proxy survives the depth-3 recursion trick', async () => {
+    // The headline claim: defeats fn.toString.toString.toString().includes(
+    // '[native code]'). Depth-1 is covered above; this walks the full chain a
+    // detector uses so a regression that only masks one level is caught.
+    const page = await context.newPage();
+    try {
+      const depth3 = await page.evaluate(() => {
+        const wd = Object.getOwnPropertyDescriptor(navigator, 'webdriver');
+        const get = wd && wd.get;
+        return get ? (get as any).toString.toString.toString().includes('[native code]') : false;
+      });
+      expect(depth3).toBe(true);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test('chrome.csi() and chrome.loadTimes() execute, runtime.connect() throws native-shaped', async () => {
+    // Presence (typeof === 'function') is not enough — a real detector calls
+    // them. loadTimes() dereferences performance.timing; connect() must throw
+    // the native "No matching signature" TypeError.
+    const page = await context.newPage();
+    try {
+      const r = await page.evaluate(() => {
+        const c = (window as any).chrome;
+        let connectErr = '';
+        try { c.runtime.connect(); } catch (e) { connectErr = String(e); }
+        return {
+          csiOk: typeof c.csi().onloadT === 'number',
+          loadTimesOk: typeof c.loadTimes().wasFetchedViaSpdy === 'boolean',
+          connectErr,
+        };
+      });
+      expect(r.csiOk).toBe(true);
+      expect(r.loadTimesOk).toBe(true);
+      expect(r.connectErr).toContain('No matching signature');
+    } finally {
+      await page.close();
+    }
+  });
 });
 
 describe('applyStealth — per-install hardware from env', () => {
