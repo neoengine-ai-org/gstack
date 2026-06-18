@@ -64,7 +64,7 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
       options: --user runner
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.suite.timeout || 25 }}
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +94,16 @@ jobs:
             file: test/codex-e2e.test.ts
           - name: e2e-gemini
             file: test/gemini-e2e.test.ts
+          # Real-PTY plan-mode smokes. Only the deterministically-reliable ones
+          # are CI-gated: office-hours (asks its mode question first, caught by
+          # the collapsed/bullet prose-AUQ detector) and plan-mode-no-op (no
+          # ask-first dependency). The plan-eng/plan-design plan-mode + floor
+          # smokes are periodic (stochastic ask-first — see touchfiles E2E_TIERS).
+          # Needs the interactive-config seed step below; PTY sessions otherwise
+          # wedge on the fresh-container onboarding/API-key dialog.
+          - name: e2e-pty-plan-smoke
+            file: test/skill-e2e-office-hours-auto-mode.test.ts test/skill-e2e-plan-mode-no-op.test.ts
+            timeout: 35
     steps:
       - uses: actions/checkout@v4
         with:
@@ -136,6 +146,28 @@ jobs:
           echo "whoami=$(whoami) HOME=$HOME TMPDIR=${TMPDIR:-unset}"
           touch /tmp/.bun-test && rm /tmp/.bun-test && echo "/tmp writable"
           bun -e "import {chromium} from 'playwright';const b=await chromium.launch({args:['--no-sandbox']});console.log('Chromium OK');await b.close()"
+
+      # PTY smokes spawn the interactive `claude` TUI. A fresh container has no
+      # ~/.claude.json, so claude wedges on the onboarding + "use detected
+      # ANTHROPIC_API_KEY?" dialog and the spawned session never reaches the
+      # skill. Seed onboarding-complete + the key approval (mirrors what the
+      # hermetic E2E child env seeds). Scoped to this suite; needs its OWN key
+      # env (the secrets block below is on the Run step only).
+      - name: Seed claude interactive config
+        if: matrix.suite.name == 'e2e-pty-plan-smoke'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          node -e '
+            const fs = require("fs"), os = require("os"), path = require("path");
+            const p = path.join(os.homedir(), ".claude.json");
+            const seed = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : {};
+            seed.hasCompletedOnboarding = true;
+            const key = process.env.ANTHROPIC_API_KEY || "";
+            if (key) seed.customApiKeyResponses = { approved: [key.slice(-20)], rejected: [] };
+            fs.writeFileSync(p, JSON.stringify(seed, null, 2));
+            console.log("seeded", p);
+          '
 
       - name: Run ${{ matrix.suite.name }}
         env:
@@ -218,14 +250,14 @@ jobs:
 
           BODY="## E2E Evals: ${STATUS}
 
-          **${PASSED}/${TOTAL}** tests passed | **\$${COST}** total cost | **12 parallel runners**
+          **${PASSED}/${TOTAL}** tests passed | **\$${COST}** total cost | **13 parallel runners**
 
           | Suite | Result | Status | Cost |
           |-------|--------|--------|------|
           $(echo -e "$SUITE_LINES")
 
           ---
-          *12x ubicloud-standard-8 (Docker: pre-baked toolchain + deps) | wall clock ≈ slowest suite*"
+          *13x ubicloud-standard-8 (Docker: pre-baked toolchain + deps) | wall clock ≈ slowest suite*"
 
           if [ "$FAILED" -gt 0 ]; then
             FAILURES=""
