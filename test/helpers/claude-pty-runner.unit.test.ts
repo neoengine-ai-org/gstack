@@ -349,6 +349,51 @@ What should we do about this?
     // The ❯1. cursor gate fires first — native list handling owns this.
     expect(isProseAUQVisible(sample)).toBe(false);
   });
+
+  // Pattern 4/5: collapsed-form prose AUQ. stripAnsi destroys the newlines +
+  // inter-word spaces, so a real prose AUQ arrives collapsed and defeats the
+  // line-anchored Patterns 1-3. These are the dominant Shape-B render mode in
+  // the plan-design smoke + floor timeouts — verbatim de-spinnered bytes from
+  // the real failing runs (bdm3sucql.output).
+  test('matches the real collapsed floor render (colon-delimited, Pattern 4/5)', () => {
+    const sample =
+      'The review is blocked on D1—reply withA, B, r Cabovetocontinue:' +
+      '- A(recommended): Spec thefull P1AskUserQuestioncopy in this review' +
+      '-B:LeaveP1copytotheimplementerwithstructuralrequirements' +
+      'C: Add a placeholder template to the plan';
+    expect(isProseAUQVisible(sample)).toBe(true);
+  });
+
+  test('matches the real collapsed plan-mode render (Recommendation + collapsed A)/B), Pattern 4/5)', () => {
+    const sample =
+      'Recommendation:A—writethecopynow.(recommended)A) Writ the fullcopy in thisdesign review— now.' +
+      '(recommended) Completeness:10/10 B) Leveit to theimplemente — task spec is enough.' +
+      'Reply withA (write the copy now)orB(leavetoimplementer)';
+    expect(isProseAUQVisible(sample)).toBe(true);
+  });
+
+  test('collapsed-form requires BOTH signals — single B) + word "recommendation" stays false', () => {
+    // Only one punctuated letter marker: the two-signal contract is not met.
+    const sample =
+      'We should consider option B) here. My recommendation is to do it now.';
+    expect(isProseAUQVisible(sample)).toBe(false);
+  });
+
+  test('collapsed-form requires letter punctuation — comma-only "ReplywithA,B,orC" stays false', () => {
+    // Reply-instruction present, but the letters carry no ) : or ( punctuation,
+    // so they could be incidental enumerations in running prose. Stays false.
+    const sample = 'ReplywithA,B,orC';
+    expect(isProseAUQVisible(sample)).toBe(false);
+  });
+
+  test('collapsed-form does not regress the existing FP guard (see option B) ... point A))', () => {
+    // The classic citation FP: a model referencing prior options in prose.
+    // No reply-instruction / recommendation marker on its own line, so the
+    // collapsed-form signal does not fire either.
+    const sample =
+      'As noted (see option B) above, and the earlier point A) we discussed, this is fine.';
+    expect(isProseAUQVisible(sample)).toBe(false);
+  });
 });
 
 describe('classifyVisible (runtime path through the runner classifier)', () => {

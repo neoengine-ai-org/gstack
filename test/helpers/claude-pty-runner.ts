@@ -407,8 +407,10 @@ export function judgePtyState(
   const prompt = `You are reading a snapshot of a terminal where Claude Code is running in plan mode for an automated test. Your job: classify the agent's current state.
 
 Pick exactly ONE:
-- WAITING — agent surfaced a question or option list and is sitting at the input prompt waiting for user reply. Signs: numbered/lettered options visible (1./2./3. or A)/B)/C)), "Recommendation:" line, cursor at empty input prompt with no recent generation activity.
+- WAITING — agent surfaced a question or option list and is sitting at the input prompt waiting for user reply. Signs: numbered/lettered options visible (1./2./3. or A)/B)/C)), "Recommendation:" line, cursor at empty input prompt with no recent generation activity, OR a fully-rendered question + reply-instruction (e.g. "Reply with A, B, or C" / "Recommendation:") is visible.
 - WORKING — agent is actively generating or running tools. Signs: spinner glyphs (✻ ✶ ✳ ✢ ✽), "Musing..." or "Churned for ..." text, recent tool-call blocks (Read/Edit/Bash/Grep), in-flight token output.
+
+PRECEDENCE OVERRIDE: if a lettered/numbered option list (A)/B)/1./2.) AND a "Recommendation:" or "Reply with"/"Reply A" instruction are BOTH visible in this snapshot, classify WAITING even when spinner glyphs (✻ ✶ ✳ ✢ ✽) are still animating — Claude Code keeps the spinner up at an idle prose decision, so a spinner alongside a fully-rendered question + reply-instruction is a residual render artifact, not active generation.
 - HUNG — agent has stopped without surfacing a question and without any spinner/work activity. Rare; usually means a crash.
 
 Respond with strict JSON ONLY (no markdown fences, no prose):
@@ -507,6 +509,13 @@ ${tail}
  *   - 3+ markdown bold-bullet options (`- **label**`) following an
  *     interrogative line — office-hours renders its mode question this way
  *     (`> - **Building a startup**`), which has no letter/number marker
+ *   - Pattern 4/5 (collapsed-form): a reply-instruction OR recommendation
+ *     marker PLUS 2+ distinct A-D letter markers each punctuated by ) : or (
+ *     anywhere in the tail. stripAnsi destroys the newlines + inter-word
+ *     spaces that the line-anchored patterns above need, so a real prose AUQ
+ *     arrives collapsed ("ReplywithA,B,orC", "A(recommended)", "-B:") and is
+ *     invisible to Patterns 1-3. This is the dominant Shape-B render mode in
+ *     the plan-design smoke + floor timeouts (verified against real run bytes).
  *
  * Used by classifyVisible and runPlanSkillFloorCheck to return outcome='asked'
  * (or auq_observed) instead of letting the harness time out when the model
@@ -567,6 +576,37 @@ export function isProseAUQVisible(visible: string): boolean {
     const boldBulletHits = (tail.match(/[-*•]\s+\*\*/g) || []).length;
     if (boldBulletHits >= 3) return true;
   }
+
+  // Pattern 4/5: collapsed-form prose AUQ. stripAnsi removes the
+  // cursor-positioning escapes that render option newlines + inter-word
+  // spaces, so "Reply with A, B, or C" arrives as "ReplywithA,B,orC" and
+  // "A) ..." as "A(recommended)" / "-B:" — defeating every line-anchored or
+  // ')'-anchored pattern above (Patterns 1-3 all return false on the real
+  // plan-design smoke + floor timeout bytes). Detect via two INDEPENDENT
+  // signals that must BOTH hold — the corroboration is what separates a real
+  // AUQ from incidental report prose that happens to mention a recommendation:
+  //   (1) a reply-instruction matched space-insensitively OR a recommendation
+  //       marker, AND
+  //   (2) 2+ distinct A-D letter markers each punctuated by ) : or ( anywhere
+  //       in the tail.
+  // A single 'B)' + the word "recommendation", or a comma-only collapsed
+  // "ReplywithA,B,orC" with no )/:/( punctuation on the letters, both stay
+  // false — the two-signal contract is pinned by unit tests.
+  const replyOrRec =
+    /reply\s*(?:with)?\s*[A-D]/i.test(tail) ||
+    /reply(?:with)?[A-D]/i.test(tail.replace(/\s+/g, '')) ||
+    /\bRecommendation\s*:/i.test(tail) ||
+    /\(recommended\)/i.test(tail);
+  if (replyOrRec) {
+    const collapsedLetterRe = /\b([A-D])[):(]/g;
+    const collapsedHits = new Set<string>();
+    let cm: RegExpExecArray | null;
+    while ((cm = collapsedLetterRe.exec(tail)) !== null) {
+      if (cm[1]) collapsedHits.add(cm[1]);
+    }
+    if (collapsedHits.size >= 2) return true;
+  }
+
   return false;
 }
 
