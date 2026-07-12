@@ -9,6 +9,12 @@
 
 set +e
 
+# Managed distributions are immutable; session start must never pull or
+# regenerate from a moving branch.
+if [ "${GSTACK_MANAGED:-}" = "1" ]; then
+  exit 0
+fi
+
 GSTACK_DIR="${GSTACK_DIR:-$HOME/.claude/skills/gstack}"
 STATE_DIR="${GSTACK_STATE_DIR:-$HOME/.gstack}"
 THROTTLE_FILE="$STATE_DIR/.last-session-update"
