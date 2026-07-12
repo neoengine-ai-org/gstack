@@ -28,6 +28,13 @@ Voice triggers (speech-to-text aliases): "upgrade the tools", "update the tools"
 
 Upgrade gstack to the latest version and show what's new.
 
+## NeoEngine managed-distribution guard
+
+Before any update check or upgrade step, inspect `GSTACK_MANAGED`. When it is
+`1`, stop with `managed_release_update_required`. Do not fetch, pull, reset,
+clone upstream, replace skill files, or change `auto_upgrade`/`update_check`.
+A reviewed immutable NeoEngine release is the only supported update path.
+
 ## Inline upgrade flow
 
 This section is referenced by all skill preambles when they detect `UPGRADE_AVAILABLE`.
