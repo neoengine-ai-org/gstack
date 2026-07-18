@@ -148,6 +148,23 @@ jobs:
           touch /tmp/.bun-test && rm /tmp/.bun-test && echo "/tmp writable"
           bun -e "import {chromium} from 'playwright';const b=await chromium.launch({args:['--no-sandbox']});console.log('Chromium OK');await b.close()"
 
+      # Public/fork PRs do not receive repository secrets. Detect that case before
+      # launching a paid real-PTY suite: without a key Claude renders "Not logged
+      # in" and the observation harness otherwise burns all three 5-minute retries.
+      # Export only a boolean; never copy the credential into an output or log.
+      - name: Detect PTY smoke auth
+        id: pty-auth
+        if: matrix.suite.name == 'e2e-pty-plan-smoke'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=PTY smoke skipped::ANTHROPIC_API_KEY is unavailable; paid Claude PTY checks were not executed."
+          fi
+
       # PTY smokes spawn the interactive `claude` TUI. A fresh container has no
       # ~/.claude.json, so claude wedges on the onboarding + "use detected
       # ANTHROPIC_API_KEY?" dialog and the spawned session never reaches the
@@ -155,7 +172,7 @@ jobs:
       # hermetic E2E child env seeds). Scoped to this suite; needs its OWN key
       # env (the secrets block below is on the Run step only).
       - name: Seed claude interactive config
-        if: matrix.suite.name == 'e2e-pty-plan-smoke'
+        if: ${{ matrix.suite.name == 'e2e-pty-plan-smoke' && steps.pty-auth.outputs.available == 'true' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
@@ -184,7 +201,7 @@ jobs:
       # claude inherits it (this runner adds no HOME/CLAUDE_CONFIG_DIR override,
       # no hermetic mode) and the Seed step already proved claude reads $HOME.
       - name: Register gstack skills for PTY smoke
-        if: matrix.suite.name == 'e2e-pty-plan-smoke'
+        if: ${{ matrix.suite.name == 'e2e-pty-plan-smoke' && steps.pty-auth.outputs.available == 'true' }}
         run: |
           set -eu
           SKILLS_DIR="$HOME/.claude/skills"
@@ -245,6 +262,7 @@ jobs:
           echo "skill registry OK"
 
       - name: Run ${{ matrix.suite.name }}
+        if: ${{ matrix.suite.name != 'e2e-pty-plan-smoke' || steps.pty-auth.outputs.available == 'true' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
