@@ -91,4 +91,29 @@ describe('NeoEngine managed distribution policy', () => {
     expect(run(['set', 'update_check', 'true'], false).status).toBe(0);
     expect(run(['get', 'update_check'], false).stdout.trim()).toBe('true');
   });
+
+  test('CI falls back when an upstream-only custom runner is unavailable', () => {
+    const workflowDir = path.join(ROOT, '.github', 'workflows');
+    const workflows = fs.readdirSync(workflowDir)
+      .filter((name) => name.endsWith('.yml') || name.endsWith('.yaml'))
+      .map((name) => [name, fs.readFileSync(path.join(workflowDir, name), 'utf-8')] as const);
+
+    for (const [name, content] of workflows) {
+      expect(content, `${name} must not hard-code an org-external runner`).not.toContain(
+        'ubicloud-standard-8',
+      );
+    }
+    for (const name of [
+      'actionlint.yml',
+      'evals-periodic.yml',
+      'evals.yml',
+      'make-pdf-gate.yml',
+      'pr-title-sync.yml',
+      'skill-docs.yml',
+      'version-gate.yml',
+    ]) {
+      const content = fs.readFileSync(path.join(workflowDir, name), 'utf-8');
+      expect(content).toContain("vars.GSTACK_LINUX_RUNNER || 'ubuntu-latest'");
+    }
+  });
 });
