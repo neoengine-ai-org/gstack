@@ -171,6 +171,23 @@ describe('gstack-gbrain-install D5 detect-first', () => {
     expect(r.stdout).toContain('https://github.com/garrytan/gbrain.git');
   });
 
+  test('--dry-run exits 0 even when github is unreachable (skips the live network probe)', () => {
+    // Simulate an offline / sandboxed environment: shadow `curl` with a stub that
+    // always fails, mimicking "cannot reach github.com". Before the dry-run
+    // hardening, the install script ran that reachability probe up front and
+    // hard-failed with exit 3 on a check it never acts on in dry-run — which made
+    // the plan-preview flake under CI/sandboxes with no outbound network.
+    const offlineBin = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-bin-'));
+    fs.writeFileSync(path.join(offlineBin, 'curl'), '#!/bin/bash\nexit 7\n', { mode: 0o755 });
+    try {
+      const r = run(INSTALL, ['--dry-run'], { env: { PATH: `${offlineBin}:${SAFE_PATH}` } });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('DRY RUN: would clone');
+    } finally {
+      fs.rmSync(offlineBin, { recursive: true, force: true });
+    }
+  });
+
   test('rejects a pre-existing path that lacks a valid gbrain package.json', () => {
     // Put garbage at ~/git/gbrain, but nothing at ~/gbrain.
     const badGit = path.join(tmpHomeReal, 'git', 'gbrain');
