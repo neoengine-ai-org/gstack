@@ -6,6 +6,8 @@ import * as path from 'path';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 const CONFIG = path.join(ROOT, 'bin', 'gstack-config');
+const UPDATE_CHECK = path.join(ROOT, 'bin', 'gstack-update-check');
+const SESSION_UPDATE = path.join(ROOT, 'bin', 'gstack-session-update');
 
 let stateDir: string;
 
@@ -30,6 +32,19 @@ function run(args: string[], managed = true) {
   });
 }
 
+function runManagedScript(script: string) {
+  return spawnSync(script, [], {
+    cwd: ROOT,
+    encoding: 'utf-8',
+    env: {
+      ...process.env,
+      GSTACK_HOME: stateDir,
+      GSTACK_STATE_DIR: stateDir,
+      GSTACK_MANAGED: '1',
+    },
+  });
+}
+
 describe('NeoEngine managed distribution policy', () => {
   test('forces both update reads off', () => {
     expect(run(['get', 'auto_upgrade']).stdout.trim()).toBe('false');
@@ -41,6 +56,15 @@ describe('NeoEngine managed distribution policy', () => {
       const result = run(['set', key, 'true']);
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('locked by the NeoEngine managed release');
+    }
+  });
+
+  test('both automatic update entry points are silent no-ops', () => {
+    for (const script of [UPDATE_CHECK, SESSION_UPDATE]) {
+      const result = runManagedScript(script);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe('');
     }
   });
 

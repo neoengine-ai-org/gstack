@@ -38,7 +38,7 @@ jobs:
       - name: Verify deterministic host generation
         run: |
           bun run gen:skill-docs --host all
-          git diff --exit-code -- .agents .hermes .openclaw openclaw
+          git diff --exit-code -- gstack-upgrade/SKILL.md .agents .hermes .openclaw openclaw
           find .agents .hermes .openclaw openclaw -type f -print0 | sort -z | xargs -0 shasum -a 256 > /tmp/host-artifacts-first.sha256
           bun run gen:skill-docs --host all
           find .agents .hermes .openclaw openclaw -type f -print0 | sort -z | xargs -0 shasum -a 256 > /tmp/host-artifacts-second.sha256
