@@ -116,4 +116,15 @@ describe('NeoEngine managed distribution policy', () => {
       expect(content).toContain("vars.GSTACK_LINUX_RUNNER || 'ubuntu-latest'");
     }
   });
+
+  test('version gate compares against the immutable PR base SHA', () => {
+    const content = fs.readFileSync(
+      path.join(ROOT, '.github', 'workflows', 'version-gate.yml'),
+      'utf-8',
+    );
+
+    expect(content).toContain('github.event.pull_request.base.sha');
+    expect(content).toContain('git show "$BASE_SHA:VERSION"');
+    expect(content).not.toContain('git show "origin/$BASE_REF:VERSION"');
+  });
 });
