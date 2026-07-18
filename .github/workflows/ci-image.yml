@@ -35,6 +35,8 @@ jobs:
         with:
           context: .github/docker
           file: .github/docker/Dockerfile.ci
+          build-args: |
+            GSTACK_APT_MIRROR=${{ vars.GSTACK_APT_MIRROR }}
           push: true
           tags: |
             ghcr.io/${{ github.repository }}/ci:latest
