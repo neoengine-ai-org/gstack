@@ -77,7 +77,13 @@ check_prereq() {
   fi
 }
 
-if ! $VALIDATE_ONLY; then
+# Prerequisites gate the paths that actually touch the network/filesystem
+# (clone + bun install + bun link). --validate-only never gets there, and
+# --dry-run only PRINTS the plan — so both skip these live checks. This keeps
+# `--dry-run` hermetic: it must print its plan and exit 0 even offline or in a
+# sandbox with no bun/git/curl, rather than hard-failing (exit 3) on a probe it
+# will never act on. A real install (neither flag set) still checks everything.
+if ! $VALIDATE_ONLY && ! $DRY_RUN; then
   check_prereq bun "Install: curl -fsSL https://bun.sh/install | bash"
   check_prereq git "Install: xcode-select --install (macOS) or your package manager"
 

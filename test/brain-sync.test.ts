@@ -23,18 +23,50 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawnSync } from 'child_process';
+import { createGbrainStub, type GbrainStub } from './helpers/gbrain-stub';
 
 const ROOT = path.resolve(import.meta.dir, '..');
 const BIN = path.join(ROOT, 'bin');
 
 let tmpHome: string;
+// A temp $HOME per test. The sync binaries resolve REMOTE_FILE
+// ($HOME/.gstack-artifacts-remote.txt), the gbrain worktree
+// ($HOME/.gstack-brain-worktree), and gbrain's config ($HOME/.gbrain/config.json)
+// off $HOME — NOT off GSTACK_HOME. Without overriding it, `gstack-artifacts-init`
+// clobbers the developer's real remote-helper file and `gstack-brain-uninstall`
+// can rm the real brain worktree. Isolating $HOME keeps every side effect inside
+// the temp dir.
+let tmpHomeReal: string;
 let bareRemote: string;
+let gbrainStub: GbrainStub;
+
+/**
+ * Hermetic child env: temp GSTACK_HOME + temp $HOME, the offline gbrain stub
+ * shadowing any real gbrain on PATH, and no ambient brain-DB URL. The uninstall
+ * path shells out to `gbrain sources remove`; on a machine that ran /setup-gbrain
+ * that would drive the LIVE brain (slow → 30s timeout, and a real-state mutation).
+ * The stub makes it a fast no-op, and clearing the DB env stops the wireup helper
+ * from locking onto a real database.
+ */
+function childEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GSTACK_HOME: tmpHome,
+    HOME: tmpHomeReal,
+    PATH: gbrainStub.path(process.env.PATH),
+    ...(extra || {}),
+  };
+  delete env.DATABASE_URL;
+  delete env.GBRAIN_DATABASE_URL;
+  delete env.GBRAIN_HOME;
+  return env;
+}
 
 function run(argv: string[], opts: { env?: Record<string, string>; input?: string } = {}) {
   const bin = argv[0];
   const full = bin.startsWith('/') ? bin : path.join(BIN, bin);
   const res = spawnSync(full, argv.slice(1), {
-    env: { ...process.env, GSTACK_HOME: tmpHome, ...(opts.env || {}) },
+    env: childEnv(opts.env),
     encoding: 'utf-8',
     input: opts.input,
     cwd: ROOT,
@@ -49,20 +81,20 @@ function git(args: string[], cwd?: string) {
 
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-sync-home-'));
+  tmpHomeReal = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-sync-real-home-'));
   bareRemote = fs.mkdtempSync(path.join(os.tmpdir(), 'brain-sync-remote-'));
+  gbrainStub = createGbrainStub();
   spawnSync('git', ['init', '--bare', '-q', '-b', 'main', bareRemote]);
 });
 
 afterEach(() => {
   fs.rmSync(tmpHome, { recursive: true, force: true });
+  // The temp $HOME holds every helper file the binaries wrote
+  // (.gstack-artifacts-remote.txt, .gstack-brain-worktree, ...), so removing it
+  // cleans them all up without touching the developer's real home.
+  fs.rmSync(tmpHomeReal, { recursive: true, force: true });
   fs.rmSync(bareRemote, { recursive: true, force: true });
-  // Clean up any remote-helper file init may have written.
-  const remoteFile = path.join(os.homedir(), '.gstack-brain-remote.txt');
-  // Only remove if it points at OUR bare remote (don't clobber a real user file).
-  try {
-    const contents = fs.readFileSync(remoteFile, 'utf-8').trim();
-    if (contents === bareRemote) fs.unlinkSync(remoteFile);
-  } catch {}
+  gbrainStub?.cleanup();
 });
 
 // ---------------------------------------------------------------
@@ -351,6 +383,23 @@ describe('gstack-brain-uninstall', () => {
     // Config key reset.
     const mode = run(['gstack-config', 'get', 'artifacts_sync_mode']);
     expect(mode.stdout.trim()).toBe('off');
+  });
+
+  test('isolation: uninstall drives the offline stub, never a live brain or real $HOME', () => {
+    run(['gstack-artifacts-init', '--remote', bareRemote]);
+    // init's remote-helper file landed inside the isolated temp $HOME, not the
+    // developer's real home.
+    expect(fs.existsSync(path.join(tmpHomeReal, '.gstack-artifacts-remote.txt'))).toBe(true);
+
+    const r = run(['gstack-brain-uninstall', '--yes']);
+    expect(r.status).toBe(0);
+
+    // The uninstall path shells out to `gbrain sources remove`. It must have
+    // resolved to the stub (proof it never reached a live brain DB), and the
+    // stub never saw a `sources add`/`sync` (those belong to wireup, not uninstall).
+    const calls = gbrainStub.calls();
+    expect(calls.some((c) => c.startsWith('sources remove'))).toBe(true);
+    expect(calls.some((c) => c.startsWith('sources add') || c.startsWith('sync'))).toBe(false);
   });
 });
 
