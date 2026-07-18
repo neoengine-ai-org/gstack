@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.60.2.0] - 2026-07-18
+
+## **gbrain tests are hermetic, and fork CI no longer waits on an upstream-only runner.**
+
+The gbrain sync/cache suites now isolate `HOME`, shadow live installations, and use an offline stub so governance tests are reproducible instead of depending on developer-machine state. Managed-distribution checks pin the supported update channels and verify that workflows remain portable across upstream and fork repositories.
+
+### Itemized changes
+
+#### Fixed
+
+- Replace hardcoded `ubicloud-standard-8` workflow targets with `${{ vars.GSTACK_LINUX_RUNNER || 'ubuntu-latest' }}` so forks run their Linux gates on an available runner while upstream can retain a managed override.
+- Isolate gbrain install/cache/sync tests from live state and network-dependent prerequisite probes.
+- Add managed-distribution governance coverage, including a guard against reintroducing hardcoded external runner labels.
+
 ## [1.60.1.0] - 2026-07-09
 
 ## **The /autoplan dual-voice eval is back on the board, catching real regressions.**
