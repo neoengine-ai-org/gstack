@@ -21,13 +21,24 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, existsSync, writeFileSync, readFileSync, rmSync, mkdirSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { createGbrainStub, type GbrainStub } from './helpers/gbrain-stub';
 
 let TMP_HOME: string;
+let gbrainStub: GbrainStub;
 const ORIGINAL_HOME = process.env.GSTACK_HOME;
+const ORIGINAL_PATH = process.env.PATH;
 
 beforeEach(() => {
   TMP_HOME = mkdtempSync(join(tmpdir(), 'gstack-cache-test-'));
   process.env.GSTACK_HOME = TMP_HOME;
+  // These tests assert the cache's "brain unreachable" behavior. cmdGet's
+  // refresh/rebuild path spawns `gbrain get` by bare name, so on a machine that
+  // ran /setup-gbrain the real gbrain would be driven against the LIVE brain —
+  // slow enough to blow the test timeout and a real-state side effect. Shadow it
+  // with a deterministic offline stub so "unreachable" is fast and hermetic
+  // regardless of whether a real gbrain is installed.
+  gbrainStub = createGbrainStub();
+  process.env.PATH = gbrainStub.path(ORIGINAL_PATH);
   // Reload the cache module fresh per test so it picks up the new HOME.
   delete require.cache[require.resolve('../bin/gstack-brain-cache')];
 });
@@ -35,6 +46,9 @@ beforeEach(() => {
 afterEach(() => {
   if (ORIGINAL_HOME) process.env.GSTACK_HOME = ORIGINAL_HOME;
   else delete process.env.GSTACK_HOME;
+  if (ORIGINAL_PATH === undefined) delete process.env.PATH;
+  else process.env.PATH = ORIGINAL_PATH;
+  gbrainStub?.cleanup();
   try { rmSync(TMP_HOME, { recursive: true, force: true }); } catch { /* best effort */ }
 });
 
@@ -153,6 +167,44 @@ describe('brain-cache schema mismatch behavior', () => {
     // the file gets deleted by the rebuild step. State should be 'missing' or
     // 'stale-fallback' depending on whether the rebuild left a file behind.
     expect(['missing', 'cold-refreshed', 'stale-fallback']).toContain(result.state);
+  });
+});
+
+describe('brain-cache test isolation (regression: never drives a live brain)', () => {
+  // A schema-version mismatch forces rebuildAllForScope, which fans a refresh
+  // across every per-project entity — the widest set of gbrain spawns cmdGet can
+  // trigger. Before this hardening, those spawns hit the real gbrain on a dev
+  // machine (slow → timeout, and worse: real-state side effects). The offline
+  // stub shadows gbrain, so we can assert every spawn was (a) captured by the
+  // stub and (b) a read-only probe, never a mutation.
+  const READONLY_VERBS = ['get', 'list-pages', 'get-recent-salience'];
+
+  test('schema-mismatch rebuild issues only read-only stub calls, never a mutation', async () => {
+    const mod = await importCache();
+    const cacheDir = join(TMP_HOME, 'projects', 'helsinki', 'brain-cache');
+    mkdirSync(cacheDir, { recursive: true });
+    writeFileSync(join(cacheDir, 'product.md'), '# stale-old-schema\n');
+    writeFileSync(join(cacheDir, '_meta.json'), JSON.stringify({
+      schema_version: '0.0.1',
+      endpoint_hash: mod.detectEndpointHash(),
+      last_refresh: { product: Date.now() },
+      last_attempt: {},
+    }));
+
+    const result = mod.cmdGet('product', 'helsinki');
+    expect(['missing', 'cold-refreshed', 'stale-fallback']).toContain(result.state);
+
+    // Proof the isolation is load-bearing: the rebuild actually spawned gbrain,
+    // and every spawn resolved to our stub (not a real, live brain).
+    const calls = gbrainStub.calls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) {
+      const verb = call.split(' ')[0];
+      expect(READONLY_VERBS).toContain(verb);
+    }
+    // Belt and suspenders: no mutating subcommand ever ran during a read path.
+    const mutating = calls.filter((c) => /\b(delete-page|put|sources\s+(remove|add)|import)\b/.test(c));
+    expect(mutating).toEqual([]);
   });
 });
 
