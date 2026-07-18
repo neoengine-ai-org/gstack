@@ -7,6 +7,7 @@ on:
       - "bin/gstack-session-update"
       - "bin/gstack-update-check"
       - "gstack-upgrade/**"
+      - "test/managed-distribution.test.ts"
       - ".github/workflows/managed-distribution.yml"
   push:
     branches:
@@ -29,11 +30,15 @@ jobs:
         run: |
           bash -n bin/gstack-config bin/gstack-session-update bin/gstack-update-check
           test "$(GSTACK_MANAGED=1 bin/gstack-config get auto_upgrade)" = "false"
+          test "$(GSTACK_MANAGED=1 bin/gstack-config get update_check)" = "false"
+          if GSTACK_MANAGED=1 bin/gstack-config set auto_upgrade true; then exit 1; else test "$?" -eq 2; fi
+          if GSTACK_MANAGED=1 bin/gstack-config set update_check true; then exit 1; else test "$?" -eq 2; fi
           GSTACK_MANAGED=1 bin/gstack-update-check
           GSTACK_MANAGED=1 bin/gstack-session-update
       - name: Verify deterministic host generation
         run: |
           bun run gen:skill-docs --host all
+          git diff --exit-code -- .agents .hermes .openclaw openclaw
           find .agents .hermes .openclaw openclaw -type f -print0 | sort -z | xargs -0 shasum -a 256 > /tmp/host-artifacts-first.sha256
           bun run gen:skill-docs --host all
           find .agents .hermes .openclaw openclaw -type f -print0 | sort -z | xargs -0 shasum -a 256 > /tmp/host-artifacts-second.sha256
